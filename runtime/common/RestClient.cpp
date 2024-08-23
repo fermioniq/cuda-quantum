@@ -101,6 +101,8 @@ nlohmann::json RestClient::post(const std::string_view remoteUrl,
   auto actualPath = std::string(remoteUrl) + std::string(path);
   auto r = cpr::Post(cpr::Url{actualPath}, cpr::Body(post.dump()), cprHeaders,
                      cpr::VerifySsl(enableSsl), *sslOptions);
+                     
+  cudaq::debug("POST response: {}", r.status_code);
 
   if (r.status_code > validHttpCode || r.status_code == 0)
     throw std::runtime_error("HTTP POST Error - status code " +
