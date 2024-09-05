@@ -291,9 +291,10 @@ std::string FermioniqServerHelper::extractJobId(ServerMessage &postResponse) {
 // Construct the path to get a job
 std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postResponse) {
   cudaq::info("constructGetJobPath");
+  std::string id = postResponse.at("id");
   // todo: Extract job-id from postResponse
   
-  auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/";
+  auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/" + id;
   return ret;
 }
 
@@ -309,7 +310,20 @@ std::string FermioniqServerHelper::constructGetJobPath(std::string &jobId) {
 cudaq::sample_result
 FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
                                  std::string &jobID) {
-  cudaq::info("processResults for job: {} - {}", jobID, postJobResponse.dump());
+  cudaq::info("processResults for job: {}", jobID);
+
+  RestClient client;
+
+  auto headers = getHeaders();
+
+  std::string path = "/api/jobs/" + jobID + "/results";
+
+  auto response_json = client.get(backendConfig.at(CFG_URL_KEY), path, headers);
+  
+  cudaq::info("got result: {}", response_json.dump());
+
+  // To-DO: Process response_json into cudaq::sample_result()
+
   auto ret = cudaq::sample_result();
   return ret;
 }
