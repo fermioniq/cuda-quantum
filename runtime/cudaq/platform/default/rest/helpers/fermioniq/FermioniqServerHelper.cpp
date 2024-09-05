@@ -314,6 +314,8 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
 
   RestClient client;
 
+  refreshTokens(false);
+
   auto headers = getHeaders();
 
   std::string path = "/api/jobs/" + jobID + "/results";
