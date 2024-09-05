@@ -177,6 +177,8 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   
   for (auto &circuitCode : circuitCodes) {
     // Construct the job message (for Fermioniq backend)
+    auto circuit = nlohmann::json::array();
+    circuits.push_back("__qir_base_compressed__");
     circuits.push_back(circuitCode.code);
 
     configs.push_back(nlohmann::json::object());
@@ -227,8 +229,18 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
 
 
 bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
-  cudaq::info("jobIsDone");
-  // TO-DO: Check if job is done
+  cudaq::info("jobIsDone {}", getJobResponse.dump());
+  
+  std::string status = getJobResponse.at("status");
+  int status_code = getJobResponse.at("status_code");
+  
+  if (status == "finished") {
+    if (status_code == 0) {
+      return true;
+    }
+    throw std::runtime_error("Job failed to execute. Status code = " + std::to_string(status_code));
+  }
+
   return false;
 }
 
