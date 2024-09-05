@@ -94,6 +94,9 @@ private:
   /// @brief user_id of logged in user
   std::string userId;
 
+  /// @brief exp time of token
+  std::chrono::_V2::system_clock::time_point tokenExpTime;
+
   /// @brief Helper method to retrieve the value of an environment variable.
   std::string getEnvVar(const std::string &key, const std::string &defaultVal,
                         const bool isRequired) const;
@@ -210,26 +213,60 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
   std::mutex m;
   std::lock_guard<std::mutex> l(m);
   RestClient client;
-  //auto now = std::chrono::high_resolution_clock::now();
+  
+  if (!force_refresh) {
+    auto now = std::chrono::high_resolution_clock::now();
+
+    cudaq::debug("now: {}, tokenExpTime: {}", now, tokenExpTime);
+
+    auto timeLeft = std::chrono::duration_cast<std::chrono::minutes>(tokenExpTime - now);
+
+    cudaq::info("timeleft minutes before token refresh: {}", timeLeft.count());
+
+    if (timeLeft.count() <= 5) {
+      force_refresh = true;
+    }
+  }
+
+  if (!force_refresh) {
+    return;
+  }
+
+  cudaq::info("refresh tokens");
 
   auto headers = getHeaders();
-  nlohmann::json j;
-  j["access_token_id"] = backendConfig.at(CFG_ACCESS_TOKEN_ID_KEY);
-  j["access_token_secret"] = backendConfig.at(CFG_ACCESS_TOKEN_SECRET_KEY);
+  nlohmann::json payload;
+  payload["access_token_id"] = backendConfig.at(CFG_ACCESS_TOKEN_ID_KEY);
+  payload["access_token_secret"] = backendConfig.at(CFG_ACCESS_TOKEN_SECRET_KEY);
 
-  auto response_json = client.post(backendConfig.at(CFG_URL_KEY), "/api/login", j, headers);
+  auto response_json = client.post(backendConfig.at(CFG_URL_KEY), "/api/login", payload, headers);
   token = response_json["jwt_token"].get<std::string>();
   userId = response_json["user_id"].get<std::string>();
 
   cudaq::info("Logged in as user: {}", userId);
-  cudaq::info("token: {}", token);
+  //cudaq::info("token: {}", token);
   auto expDate = response_json["expiration_date"].get<std::string>();
-  cudaq::info("exp date: {}", expDate);
+
+
+  std::tm tm = {};
+  //2024-09-05T13:42:49.660841+00:00
+  std::stringstream ss(expDate);
+  ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
+
+  tokenExpTime = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+
+  cudaq::debug("exp time: {}", tokenExpTime);
 }
 
 
 bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
-  cudaq::info("jobIsDone {}", getJobResponse.dump());
+#ifdef CUDAQ_DEBUG
+  cudaq::debug("check if jobIsDone {}", getJobResponse.dump());
+#else
+  cudaq::info("check if jobIsDone");
+#endif
+
+  refreshTokens(false);
   
   std::string status = getJobResponse.at("status");
   int status_code = getJobResponse.at("status_code");
