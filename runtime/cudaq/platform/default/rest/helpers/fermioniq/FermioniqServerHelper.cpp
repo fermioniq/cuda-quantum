@@ -30,8 +30,8 @@ class FermioniqServerHelper : public ServerHelper {
   static constexpr const char *CFG_URL_KEY = "base_url";
   static constexpr const char *CFG_ACCESS_TOKEN_ID_KEY = "access_token_id";
   static constexpr const char *CFG_ACCESS_TOKEN_SECRET_KEY = "access_token_secret";
-  static constexpr const char *CFG_API_KEY_KEY = "access_token_secret";
-  static constexpr const char *CFG_USER_AGENT_KEY = "access_token_secret";
+  static constexpr const char *CFG_API_KEY_KEY = "api_key";
+  static constexpr const char *CFG_USER_AGENT_KEY = "user_agent";
   static constexpr const char *CFG_TOKEN_KEY = "token";
   
   static constexpr const char *CFG_REMOTE_CONFIG_KEY = "remote_config";
@@ -40,7 +40,7 @@ class FermioniqServerHelper : public ServerHelper {
 
 public:
   /// @brief Returns the name of the server helper.
-  const std::string name() const override { return "Fermioniq"; }
+  const std::string name() const override { return "fermioniq"; }
 
   /// @brief Returns the headers for the server requests.
   RestHeaders getHeaders() override;
@@ -73,6 +73,8 @@ public:
   cudaq::sample_result processResults(ServerMessage &postJobResponse,
                                       std::string &jobId) override;
 
+  void refreshTokens(bool force_refresh);
+
 #if 0
   /// @brief Update `passPipeline` with architecture-specific pass options
   void updatePassPipeline(const std::filesystem::path &platformPath,
@@ -84,7 +86,13 @@ public:
 
 private:
   /// @brief RestClient used for HTTP requests.
-  RestClient client;
+  //RestClient client;
+
+  /// @brief API Key for Fermioniq API
+  std::string token;
+
+  /// @brief user_id of logged in user
+  std::string userId;
 
   /// @brief Helper method to retrieve the value of an environment variable.
   std::string getEnvVar(const std::string &key, const std::string &defaultVal,
@@ -115,6 +123,8 @@ void FermioniqServerHelper::initialize(BackendConfig config) {
     backendConfig[CFG_REMOTE_CONFIG_KEY] = config["remote_config"];
   if (config.find("noise_model") != config.end())
     backendConfig[CFG_NOISE_MODEL_KEY] = config["noise_model"];
+
+  refreshTokens(true);
 }
 
 // Implementation of the getValueOrDefault function
@@ -159,42 +169,79 @@ bool FermioniqServerHelper::keyExists(const std::string &key) const {
 ServerJobPayload
 FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   cudaq::debug("createJob");
-  std::vector<ServerMessage> jobs;
+
+  auto job = nlohmann::json::object();
+  auto circuits = nlohmann::json::array();
+  auto configs = nlohmann::json::array();
+  auto noise_models = nlohmann::json::array();
+  
   for (auto &circuitCode : circuitCodes) {
     // Construct the job message (for Fermioniq backend)
-    ServerMessage job;
-    job["circuit"] = circuitCode.code;
-    if (keyExists(CFG_REMOTE_CONFIG_KEY)) {
-      job["remote_config"] = backendConfig.at(CFG_REMOTE_CONFIG_KEY);
-    }
+    circuits.push_back(circuitCode.code);
 
-    jobs.push_back(job);
+    configs.push_back(nlohmann::json::object());
+    noise_models.push_back(nullptr);
 
     //cudaq::debug("post job: {}", job);
   }
 
+  if (keyExists(CFG_REMOTE_CONFIG_KEY)) {
+    job["remote_config"] = backendConfig.at(CFG_REMOTE_CONFIG_KEY);
+  }
+  job["circuit"] = circuits;
+  job["config"] = configs;
+  job["noise_model"] = noise_models;
+  job["verbosity_level"] = 1;
+  job["project_id"] = "943977db-7264-4b66-addf-c9d6085d9d8f"; // todo: remove. CudaQ dev
+
+  auto payload = nlohmann::json::array();
+  payload.push_back(job);
+
   // Return a tuple containing the job path, headers, and the job message
   auto job_path = backendConfig.at(CFG_URL_KEY) + "/api/jobs";
-  auto ret = std::make_tuple(job_path, getHeaders(), jobs);
+  auto ret = std::make_tuple(job_path, getHeaders(), payload);
   return ret;
 }
 
+/// Refresh the api key and refresh-token
+void FermioniqServerHelper::refreshTokens(bool force_refresh) {
+  std::mutex m;
+  std::lock_guard<std::mutex> l(m);
+  RestClient client;
+  //auto now = std::chrono::high_resolution_clock::now();
+
+  auto headers = getHeaders();
+  nlohmann::json j;
+  j["access_token_id"] = backendConfig.at(CFG_ACCESS_TOKEN_ID_KEY);
+  j["access_token_secret"] = backendConfig.at(CFG_ACCESS_TOKEN_SECRET_KEY);
+
+  auto response_json = client.post(backendConfig.at(CFG_URL_KEY), "/api/login", j, headers);
+  token = response_json["jwt_token"].get<std::string>();
+  userId = response_json["user_id"].get<std::string>();
+
+  cudaq::info("Logged in as user: {}", userId);
+  cudaq::info("token: {}", token);
+  auto expDate = response_json["expiration_date"].get<std::string>();
+  cudaq::info("exp date: {}", expDate);
+}
+
+
 bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
-  cudaq::debug("jobIsDone from {}", getJobResponse);
+  cudaq::info("jobIsDone");
   // TO-DO: Check if job is done
   return false;
 }
 
 // From a server message, extract the job ID
 std::string FermioniqServerHelper::extractJobId(ServerMessage &postResponse) {
-  cudaq::debug("extractJobId from {}", postResponse);
+  cudaq::info("extractJobId");
 
-  return "";
+  return postResponse.at("id");
 }
 
 // Construct the path to get a job
 std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postResponse) {
-  cudaq::debug("constructGetJobPath from {}", postResponse);
+  cudaq::info("constructGetJobPath");
   // todo: Extract job-id from postResponse
   
   auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/";
@@ -203,9 +250,9 @@ std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postRespon
 
 // Overloaded version of constructGetJobPath for jobId input
 std::string FermioniqServerHelper::constructGetJobPath(std::string &jobId) {
-  cudaq::debug("constructGetJobPath (jobId) from {}", jobId);
+  cudaq::info("constructGetJobPath (jobId) from {}", jobId);
   
-  auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/";
+  auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/" + jobId;
   return ret;
 }
 
@@ -213,22 +260,23 @@ std::string FermioniqServerHelper::constructGetJobPath(std::string &jobId) {
 cudaq::sample_result
 FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
                                  std::string &jobID) {
-  cudaq::debug("processResults for job: {} - {}", jobID, postJobResponse.dump());
+  cudaq::info("processResults for job: {} - {}", jobID, postJobResponse.dump());
   auto ret = cudaq::sample_result();
   return ret;
 }
 
 // Get the headers for the API requests
 RestHeaders FermioniqServerHelper::getHeaders() {
-  cudaq::debug("getHeaders");
+  cudaq::info("getHeaders");
   // Construct the headers
   RestHeaders headers;
   if (keyExists(CFG_API_KEY_KEY) && backendConfig.at(CFG_API_KEY_KEY) != "") {
     headers["x-functions-key"] = backendConfig.at(CFG_API_KEY_KEY);
   }
   
-  if (keyExists(CFG_TOKEN_KEY)) {
-    headers["Authorization"] = "Bearer " + backendConfig.at(CFG_TOKEN_KEY);
+  if (!this->token.empty()) {
+    cudaq::info("add token");
+    headers["Authorization"] = token;
   }
   headers["Content-Type"] = "application/json";
   headers["User-Agent"] = backendConfig.at(CFG_USER_AGENT_KEY);
@@ -237,28 +285,6 @@ RestHeaders FermioniqServerHelper::getHeaders() {
   return headers;
 }
 
-#if 0
-// TO-DO Fermioniq: Note sure if we need this
-void FermioniqServerHelper::updatePassPipeline(
-  const std::filesystem::path &platformPath, std::string &passPipeline) {
-  // Note: the leading and trailing single quotes are needed in case there are
-  // spaces in the filename.
-  std::string pathToFile;
-  auto iter = backendConfig.find("mapping_file");
-  if (iter != backendConfig.end()) {
-    // Use provided path to file
-    pathToFile = std::string("'") + iter->second + std::string("'");
-  } else {
-    // Construct path to file
-    pathToFile =
-        std::string("'") +
-        std::string(platformPath / std::string("mapping/iqm") /
-                    (backendConfig["qpu-architecture"] + std::string(".txt'")));
-  }
-  passPipeline =
-      std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
-}
-#endif
 
 std::chrono::microseconds
 FermioniqServerHelper::nextResultPollingInterval(ServerMessage &postResponse) {
