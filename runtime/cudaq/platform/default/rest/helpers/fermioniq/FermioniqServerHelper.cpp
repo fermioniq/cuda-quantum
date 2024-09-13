@@ -97,6 +97,8 @@ private:
   /// @brief bond_dimension config
   std::optional<int> bond_dim;
 
+  std::vector<std::string> circuit_names;
+
   /// @brief exp time of token
   std::chrono::_V2::system_clock::time_point tokenExpTime;
 
@@ -116,6 +118,8 @@ private:
 // Initialize the Fermioniq server helper with a given backend configuration
 void FermioniqServerHelper::initialize(BackendConfig config) {
   cudaq::info("Initializing Fermioniq Backend.");
+  
+  parseConfigForCommonParams(config);
 
   backendConfig[CFG_URL_KEY] = getEnvVar("FERMIONIQ_API_BASE_URL", DEFAULT_URL, false);
   backendConfig[CFG_API_KEY_KEY] = getEnvVar("FERMIONIQ_API_KEY", DEFAULT_API_KEY, false);
@@ -145,6 +149,22 @@ FermioniqServerHelper::getValueOrDefault(const BackendConfig &config,
                                     const std::string &key,
                                     const std::string &defaultValue) const {
   return config.find(key) != config.end() ? config.at(key) : defaultValue;
+}
+
+std::vector<std::string> split_string(std::string str, std::string token){
+    std::vector<std::string>result;
+    while(str.size()){
+        std::size_t index = str.find(token);
+        if(index!=std::string::npos){
+            result.push_back(str.substr(0,index));
+            str = str.substr(index+token.size());
+            if(str.size()==0)result.push_back(str);
+        }else{
+            result.push_back(str);
+            str = "";
+        }
+    }
+    return result;
 }
 
 // Retrieve an environment variable
@@ -187,7 +207,15 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   auto configs = nlohmann::json::array();
   auto noise_models = nlohmann::json::array();
   
+  std::vector<std::string> circuit_names;
+
   for (auto &circuitCode : circuitCodes) {
+    cudaq::info("name: {}", circuitCode.name);
+
+    circuit_names.push_back(circuitCode.name);
+
+    cudaq::info("outputNames: {}", circuitCode.output_names.dump());
+
     // Construct the job message (for Fermioniq backend)
     circuits.push_back(circuitCode.code);
 
@@ -197,9 +225,21 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
       config["bond_dim"] = bond_dim.value();
     }
 
+    auto output_config = nlohmann::json::object();
+    auto exp_val = nlohmann::json::object();
+    exp_val["enabled"] = true;
+    output_config["expectation_values"] = exp_val;
+
+    config["output"] = output_config;
+
     configs.push_back(config);
     noise_models.push_back(nullptr);
   }
+
+  auto circuit_names_imploded = std::accumulate(circuit_names.begin(), circuit_names.end(), std::string(), 
+    [](const std::string& a, const std::string& b) -> std::string { 
+        return a + (a.length() > 0 ? "," : "") + b; 
+    });
 
   if (keyExists(CFG_REMOTE_CONFIG_KEY)) {
     job["remote_config"] = backendConfig.at(CFG_REMOTE_CONFIG_KEY);
@@ -208,6 +248,7 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   job["config"] = configs;
   job["noise_model"] = noise_models;
   job["verbosity_level"] = 1;
+  job["label"] = circuit_names_imploded;
   job["project_id"] = "943977db-7264-4b66-addf-c9d6085d9d8f"; // todo: remove. CudaQ dev
 
   auto payload = nlohmann::json::array();
@@ -281,8 +322,15 @@ bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
   int status_code = getJobResponse.at("status_code");
 
   if (status == "finished") {
-    cudaq::info("job is finished");
+    cudaq::info("job is finished: {}", getJobResponse.dump());
     if (status_code == 0) {
+
+      // label is where we store circuit names comma separated.
+      std::string label = getJobResponse.at("job_label");    
+      auto splitted = split_string(label, ",");
+
+      circuit_names = splitted;
+
       return true;
     }
     throw std::runtime_error("Job failed to execute. Status code = " + std::to_string(status_code));
@@ -324,6 +372,12 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
                                  std::string &jobID) {
   cudaq::info("processResults for job: {}", jobID);
 
+  auto &output_names = outputNames[jobID];
+  for (auto &[result, info] : output_names) {
+    cudaq::info("Qubit {} Name {}", info.qubitNum,
+                info.registerName);
+  }
+
   RestClient client;
 
   refreshTokens(false);
@@ -334,14 +388,16 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
 
   auto response_json = client.get(backendConfig.at(CFG_URL_KEY), path, headers);
   
-  cudaq::debug("got job result: {}", response_json.dump());
+  cudaq::info("got job result: {}", response_json.dump());
 
   std::vector<ExecutionResult> execution_results;
-  auto sample_result = cudaq::sample_result();
   
+  //bool all_circuit_names_same = std::adjacent_find(circuit_names.begin(), circuit_names.end(), std::not_equal_to<>() ) == circuit_names.end());
+
   auto metadata = response_json.at("metadata");
   cudaq::info("metadata: {}", metadata.dump());
   auto output = response_json.at("emulator_output");
+  int index = 0;
   for (const auto &it : output.items()) {
     cudaq::info("result: {}", it.value().dump());
     int circuit_number = it.value().at("circuit_number");
@@ -355,10 +411,17 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
     for (const auto &[qubit_str, n_observed] : samples.items()) {
       sample_dict[qubit_str] = n_observed;
     }
-    ExecutionResult exec_result { sample_dict, GlobalRegisterName };
 
-    sample_result.append(exec_result);
+    cudaq::info("index name: {}", circuit_names[index]);
+    ExecutionResult exec_result(
+      sample_dict,
+      circuit_names[index]);
+
+    execution_results.push_back(exec_result);
+    index++;
   }
+
+  auto sample_result = cudaq::sample_result(execution_results);
 
   return sample_result;
 }

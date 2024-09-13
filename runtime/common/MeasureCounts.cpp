@@ -171,9 +171,11 @@ sample_result::sample_result(std::vector<ExecutionResult> &results) {
   for (auto &result : results) {
     sampleResults.insert({result.registerName, result});
   }
-  if (!results.empty())
-    for (auto &[bits, count] : results[0].counts)
+  if (!results.empty()) {
+    for (auto &[bits, count] : results[0].counts) {
       totalShots += count;
+    }
+  }
 }
 
 sample_result::sample_result(double preComputedExp,
@@ -325,9 +327,15 @@ double sample_result::probability(std::string_view bitStr,
     return 0.0;
 
   const auto countIter = iter->second.counts.find(bitStr.data());
-  return (countIter == iter->second.counts.end())
-             ? 0.0
-             : (double)countIter->second / totalShots;
+  if (countIter == iter->second.counts.end()) {
+    return 0.0;
+  }
+
+  printf("bitStr: %s\n", bitStr.data());
+  printf("count: %ld\n", countIter->second);
+  printf("totalShots: %ld\n", totalShots);
+
+  return (double)countIter->second / totalShots;
 }
 
 std::size_t sample_result::count(std::string_view bitStr,
@@ -363,22 +371,33 @@ bool sample_result::has_expectation(const std::string_view registerName) const {
 
 double sample_result::expectation(const std::string_view registerName) const {
   double aver = 0.0;
+  printf("calc expectation for register_name: %s\n", registerName.data());
   auto iter = sampleResults.find(registerName.data());
-  if (iter == sampleResults.end())
+  if (iter == sampleResults.end()) {
     return 0.0;
+  }
 
-  if (iter->second.expectationValue.has_value())
+  if (iter->second.expectationValue.has_value()) {
     return iter->second.expectationValue.value();
+  }
 
   auto counts = iter->second.counts;
   for (auto &kv : counts) {
+    printf("calc probability for: %s\n", kv.first.c_str());
     auto par = has_even_parity(kv.first);
+    printf("has_even_parity: %d\n", par);
+    
     auto p = probability(kv.first, registerName);
+    printf("probability: %f\n", p);
     if (!par) {
       p = -p;
     }
+    printf("probability after applied parity: %f\n", p);
     aver += p;
+    printf("total: %f\n", aver);
   }
+
+  printf("RETURN expectation: %f\n", aver);
 
   return aver;
 }
