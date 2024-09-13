@@ -118,7 +118,7 @@ private:
 // Initialize the Fermioniq server helper with a given backend configuration
 void FermioniqServerHelper::initialize(BackendConfig config) {
   cudaq::info("Initializing Fermioniq Backend.");
-  
+
   parseConfigForCommonParams(config);
 
   backendConfig[CFG_URL_KEY] = getEnvVar("FERMIONIQ_API_BASE_URL", DEFAULT_URL, false);
@@ -392,7 +392,7 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
 
   std::vector<ExecutionResult> execution_results;
   
-  //bool all_circuit_names_same = std::adjacent_find(circuit_names.begin(), circuit_names.end(), std::not_equal_to<>() ) == circuit_names.end());
+  bool all_circuit_names_same = std::adjacent_find(circuit_names.begin(), circuit_names.end(), std::not_equal_to<>() ) == circuit_names.end();
 
   auto metadata = response_json.at("metadata");
   cudaq::info("metadata: {}", metadata.dump());
@@ -415,13 +415,48 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
     cudaq::info("index name: {}", circuit_names[index]);
     ExecutionResult exec_result(
       sample_dict,
-      circuit_names[index]);
+      all_circuit_names_same ? GlobalRegisterName : circuit_names[index]);
 
     execution_results.push_back(exec_result);
     index++;
   }
 
   auto sample_result = cudaq::sample_result(execution_results);
+
+  // First reorder the global register by QIR qubit number.
+  std::vector<std::size_t> qirQubitMeasurements;
+  qirQubitMeasurements.reserve(output_names.size());
+  for (auto &[result, info] : output_names)
+    qirQubitMeasurements.push_back(info.qubitNum);
+
+  std::vector<std::size_t> idx(output_names.size());
+  std::iota(idx.begin(), idx.end(), 0);
+  std::sort(idx.begin(), idx.end(), [&](std::size_t i1, std::size_t i2) {
+    return qirQubitMeasurements[i1] < qirQubitMeasurements[i2];
+  });
+  cudaq::info("Reordering global result to map QIR result order to QIR qubit "
+              "allocation order is {}",
+              idx);
+  sample_result.reorder(idx);
+
+  // Now reorder according to reorderIdx[]. This sorts the global bitstring in
+  // original user qubit allocation order.
+  auto thisJobReorderIdxIt = reorderIdx.find(jobID);
+  if (thisJobReorderIdxIt != reorderIdx.end()) {
+    auto &thisJobReorderIdx = thisJobReorderIdxIt->second;
+    if (!thisJobReorderIdx.empty())
+      sample_result.reorder(thisJobReorderIdx);
+  }
+
+  // We will also make registers for each result using output_names.
+  #if 0
+  for (auto &[result, info] : output_names) {
+    cudaq::sample_result singleBitResult = sample_result.get_marginal({result});
+    ExecutionResult executionResult{singleBitResult.to_map(),
+                                    info.registerName};
+    sample_result.append(executionResult);
+  }
+  #endif
 
   return sample_result;
 }
