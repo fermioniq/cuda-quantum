@@ -93,6 +93,9 @@ private:
 
   /// @brief user_id of logged in user
   std::string userId;
+  
+  /// @brief bond_dimension config
+  std::optional<int> bond_dim;
 
   /// @brief exp time of token
   std::chrono::_V2::system_clock::time_point tokenExpTime;
@@ -114,18 +117,24 @@ private:
 void FermioniqServerHelper::initialize(BackendConfig config) {
   cudaq::info("Initializing Fermioniq Backend.");
 
-  backendConfig[CFG_URL_KEY] = getValueOrDefault(config, "base_url", DEFAULT_URL);
-  backendConfig[CFG_API_KEY_KEY] = getValueOrDefault(config, "api_key", DEFAULT_API_KEY);
+  backendConfig[CFG_URL_KEY] = getEnvVar("FERMIONIQ_API_BASE_URL", DEFAULT_URL, false);
+  backendConfig[CFG_API_KEY_KEY] = getEnvVar("FERMIONIQ_API_KEY", DEFAULT_API_KEY, false);
   
   backendConfig[CFG_ACCESS_TOKEN_ID_KEY] = getEnvVar("FERMIONIQ_ACCESS_TOKEN_ID", "", true);
   backendConfig[CFG_ACCESS_TOKEN_SECRET_KEY] = getEnvVar("FERMIONIQ_ACCESS_TOKEN_SECRET", "", true);
 
   backendConfig[CFG_USER_AGENT_KEY] = "cudaq/" + std::string(cudaq::getVersion());
 
-  if (config.find("remote_config") != config.end())
+  if (config.find("remote_config") != config.end()) {
     backendConfig[CFG_REMOTE_CONFIG_KEY] = config["remote_config"];
-  if (config.find("noise_model") != config.end())
+  }
+  if (config.find("noise_model") != config.end()) {
     backendConfig[CFG_NOISE_MODEL_KEY] = config["noise_model"];
+  }
+
+  if (config.find("bond_dim") != config.end()) {
+    bond_dim.emplace(std::stoi(config.at("bond_dim")));
+  }
 
   refreshTokens(true);
 }
@@ -174,20 +183,22 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   cudaq::debug("createJob");
 
   auto job = nlohmann::json::object();
-  auto circuits = nlohmann::json::array();
+  auto circuits = nlohmann::json::array({"__qir_base_compressed__"});
   auto configs = nlohmann::json::array();
   auto noise_models = nlohmann::json::array();
   
   for (auto &circuitCode : circuitCodes) {
     // Construct the job message (for Fermioniq backend)
-    auto circuit = nlohmann::json::array();
-    circuits.push_back("__qir_base_compressed__");
     circuits.push_back(circuitCode.code);
 
-    configs.push_back(nlohmann::json::object());
-    noise_models.push_back(nullptr);
+    auto config = nlohmann::json::object();
+    config["n_shots"] = static_cast<int>(shots);
+    if (bond_dim.has_value()) {
+      config["bond_dim"] = bond_dim.value();
+    }
 
-    //cudaq::debug("post job: {}", job);
+    configs.push_back(config);
+    noise_models.push_back(nullptr);
   }
 
   if (keyExists(CFG_REMOTE_CONFIG_KEY)) {
@@ -221,7 +232,7 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
 
     auto timeLeft = std::chrono::duration_cast<std::chrono::minutes>(tokenExpTime - now);
 
-    cudaq::info("timeleft minutes before token refresh: {}", timeLeft.count());
+    cudaq::debug("timeleft minutes before token refresh: {}", timeLeft.count());
 
     if (timeLeft.count() <= 5) {
       force_refresh = true;
@@ -261,21 +272,22 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
 
 bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
 #ifdef CUDAQ_DEBUG
-  cudaq::debug("check if jobIsDone {}", getJobResponse.dump());
-#else
-  cudaq::info("check if jobIsDone");
+  cudaq::debug("check job status {}", getJobResponse.dump());
 #endif
 
   refreshTokens(false);
   
   std::string status = getJobResponse.at("status");
   int status_code = getJobResponse.at("status_code");
-  
+
   if (status == "finished") {
+    cudaq::info("job is finished");
     if (status_code == 0) {
       return true;
     }
     throw std::runtime_error("Job failed to execute. Status code = " + std::to_string(status_code));
+  } else {
+    cudaq::info("job still running. status={}", status);
   }
 
   return false;
@@ -322,12 +334,33 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
 
   auto response_json = client.get(backendConfig.at(CFG_URL_KEY), path, headers);
   
-  cudaq::info("got result: {}", response_json.dump());
+  cudaq::debug("got job result: {}", response_json.dump());
 
-  // To-DO: Process response_json into cudaq::sample_result()
+  std::vector<ExecutionResult> execution_results;
+  auto sample_result = cudaq::sample_result();
+  
+  auto metadata = response_json.at("metadata");
+  cudaq::info("metadata: {}", metadata.dump());
+  auto output = response_json.at("emulator_output");
+  for (const auto &it : output.items()) {
+    cudaq::info("result: {}", it.value().dump());
+    int circuit_number = it.value().at("circuit_number");
+    cudaq::info("circuit: {}", circuit_number);
 
-  auto ret = cudaq::sample_result();
-  return ret;
+    // "samples":{"00000":500,"11111":500}
+    auto output = it.value().at("output");
+    auto samples = output.at("samples");
+
+    CountsDictionary sample_dict;
+    for (const auto &[qubit_str, n_observed] : samples.items()) {
+      sample_dict[qubit_str] = n_observed;
+    }
+    ExecutionResult exec_result { sample_dict, GlobalRegisterName };
+
+    sample_result.append(exec_result);
+  }
+
+  return sample_result;
 }
 
 // Get the headers for the API requests

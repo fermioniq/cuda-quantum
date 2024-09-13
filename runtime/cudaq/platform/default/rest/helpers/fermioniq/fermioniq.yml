@@ -36,4 +36,9 @@ target-arguments:
     required: false
     type: string
     platform-arg: noise 
-    help-string: "Specify the noise model for simulation."
+    help-string: "Specify the path to a noise model."
+  - key: bond-dim
+    required: false
+    type: string
+    platform-arg: bond_dim
+    help-string: "Specify bond-dimension. Applies to all circuits."

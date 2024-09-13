@@ -25,6 +25,6 @@ struct ghz {
 };
 
 int main() {
-  auto counts = cudaq::sample(ghz{});
+  auto counts = cudaq::sample(1001, ghz());
   counts.dump();
 }
