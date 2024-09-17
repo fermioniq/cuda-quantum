@@ -36,6 +36,9 @@ class FermioniqServerHelper : public ServerHelper {
   
   static constexpr const char *CFG_REMOTE_CONFIG_KEY = "remote_config";
   static constexpr const char *CFG_NOISE_MODEL_KEY = "noise_model";
+  static constexpr const char *CFG_OBSERVABLES_KEY = "observables";
+  static constexpr const char *CFG_BOND_DIM_KEY = "bond_dim";
+  static constexpr const char *CFG_PROJECT_ID_KEY = "project_id";
 
 
 public:
@@ -93,9 +96,6 @@ private:
 
   /// @brief user_id of logged in user
   std::string userId;
-  
-  /// @brief bond_dimension config
-  std::optional<int> bond_dim;
 
   std::vector<std::string> circuit_names;
 
@@ -129,6 +129,10 @@ void FermioniqServerHelper::initialize(BackendConfig config) {
 
   backendConfig[CFG_USER_AGENT_KEY] = "cudaq/" + std::string(cudaq::getVersion());
 
+  if (config.find("project_id") != config.end()) {
+    backendConfig[CFG_PROJECT_ID_KEY] = config.at("project_id");
+  }
+
   if (config.find("remote_config") != config.end()) {
     backendConfig[CFG_REMOTE_CONFIG_KEY] = config["remote_config"];
   }
@@ -137,7 +141,11 @@ void FermioniqServerHelper::initialize(BackendConfig config) {
   }
 
   if (config.find("bond_dim") != config.end()) {
-    bond_dim.emplace(std::stoi(config.at("bond_dim")));
+    backendConfig[CFG_BOND_DIM_KEY] = config.at("bond_dim");
+  }
+
+  if (config.find("observables") != config.end()) {
+    backendConfig[CFG_OBSERVABLES_KEY] = config.at("observables");
   }
 
   refreshTokens(true);
@@ -221,18 +229,22 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
 
     auto config = nlohmann::json::object();
     config["n_shots"] = static_cast<int>(shots);
-    if (bond_dim.has_value()) {
-      config["bond_dim"] = bond_dim.value();
+    if (keyExists(CFG_BOND_DIM_KEY)) {
+      config["bond_dim"] = stoi(backendConfig.at(CFG_BOND_DIM_KEY));
     }
 
-    auto output_config = nlohmann::json::object();
-    auto exp_val = nlohmann::json::object();
-    exp_val["enabled"] = true;
-    output_config["expectation_values"] = exp_val;
-
-    config["output"] = output_config;
+    if (keyExists(CFG_OBSERVABLES_KEY)) {
+      auto output_config = nlohmann::json::object();
+      auto exp_val = nlohmann::json::object();
+      exp_val["enabled"] = true;
+      output_config["expectation_values"] = exp_val;
+      output_config["cudaq_spin_op"] = backendConfig.at(CFG_OBSERVABLES_KEY);
+      config["output"] = output_config;
+    }
 
     configs.push_back(config);
+
+    // To-DO: Add noise models
     noise_models.push_back(nullptr);
   }
 
@@ -249,7 +261,9 @@ FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   job["noise_model"] = noise_models;
   job["verbosity_level"] = 1;
   job["label"] = circuit_names_imploded;
-  job["project_id"] = "943977db-7264-4b66-addf-c9d6085d9d8f"; // todo: remove. CudaQ dev
+  if (keyExists(CFG_PROJECT_ID_KEY)) {
+    job["project_id"] = backendConfig.at(CFG_PROJECT_ID_KEY);
+  }
 
   auto payload = nlohmann::json::array();
   payload.push_back(job);
