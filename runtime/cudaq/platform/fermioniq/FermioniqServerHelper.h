@@ -58,9 +58,6 @@ public:
   ServerJobPayload
   createJob(std::vector<KernelExecution> &circuitCodes) override;
 
-  ServerJobPayload
-  createJob(std::vector<KernelExecution> &circuitCodes, cudaq::spin_op *spin_op);
-
   /// @brief Extracts the job ID from the server's response to a job submission.
   std::string extractJobId(ServerMessage &postResponse) override;
 

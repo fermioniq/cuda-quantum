@@ -46,7 +46,7 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "mlir/Transforms/Passes.h"
-#include "FermioniqServerHelper.h"
+//#include "FermioniqServerHelper.h"
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
@@ -82,7 +82,7 @@ protected:
 
   /// @brief Pointer to the concrete ServerHelper, provides
   /// specific JSON payloads and POST/GET URL paths.
-  std::unique_ptr<cudaq::FermioniqServerHelper> serverHelper;
+  std::unique_ptr<cudaq::ServerHelper> serverHelper;
 
   /// @brief Mapping of general key-values for backend
   /// configuration.
@@ -105,11 +105,16 @@ protected:
   extractQuakeCodeAndContext(const std::string &kernelName, void *data) = 0;
   virtual void cleanupContext(mlir::MLIRContext *context) { return; }
 
+    // Pointer to the concrete Executor for this QPU
+  std::unique_ptr<cudaq::Executor> executor;
+
 public:
   /// @brief The constructor
   FermioniqBaseQPU() : QPU() {
     std::filesystem::path cudaqLibPath{cudaq::getCUDAQLibraryPath()};
     platformPath = cudaqLibPath.parent_path().parent_path() / "targets";
+
+    executor = std::make_unique<cudaq::Executor>();
   }
 
   FermioniqBaseQPU(FermioniqBaseQPU &&) = delete;
@@ -131,6 +136,7 @@ public:
   /// Provide the number of shots
   void setShots(int _nShots) override {
     nShots = _nShots;
+    executor->setShots(static_cast<std::size_t>(_nShots));
   }
 
   /// Clear the number of shots
@@ -279,17 +285,23 @@ public:
     // Set the qpu name
     qpuName = mutableBackend;
 
+#if 0
     // Create the ServerHelper for this QPU and give it the backend config
     auto sh = registry::get<cudaq::ServerHelper>(qpuName);
     ServerHelper* sh_raw = sh.release();
     FermioniqServerHelper *fsh_raw = dynamic_cast<FermioniqServerHelper *>(sh_raw);
     std::unique_ptr<FermioniqServerHelper> fsh = std::unique_ptr<FermioniqServerHelper>(fsh_raw);
     serverHelper.swap(fsh);
+#endif
+    serverHelper = registry::get<cudaq::ServerHelper>(qpuName);
     if (serverHelper == nullptr) {
       throw std::runtime_error("No server helper found");
     }
     serverHelper->initialize(backendConfig);
     serverHelper->updatePassPipeline(platformPath, passPipelineConfig);
+
+    // Give the server helper to the executor
+    executor->setServerHelper(serverHelper.get());
   }
 
   /// @brief Conditionally form an output_names JSON object if this was for QIR
@@ -446,7 +458,41 @@ public:
 
       cudaq::info("Output names: {}", j.dump());
 
-      codes.emplace_back(name, codeStr, j, mapping_reorder_idx);
+      if (executionContext->name == "observe") {
+
+        auto spin = executionContext->spin.value();
+
+        auto user_data = nlohmann::json::object();
+
+        auto obs = nlohmann::json::array();
+
+        spin->for_each_term([&](spin_op &term) {
+
+          auto spin_op = nlohmann::json::object();
+
+          auto terms = nlohmann::json::array();
+
+          auto termStr = term.to_string(false);
+          
+          terms.push_back(termStr);
+
+          auto coeff = term.get_coefficient();
+          auto coeff_str = fmt::format("{}{}{}j", coeff.real(),
+                          coeff.imag() < 0.0 ? "-" : "+", std::fabs(coeff.imag()));
+
+          terms.push_back(coeff_str);                        
+
+          obs.push_back(terms);
+        });
+
+        user_data["observable"] = obs;
+        
+        codes.emplace_back(name, codeStr, j, mapping_reorder_idx, user_data);
+      } else {
+        codes.emplace_back(name, codeStr, j, mapping_reorder_idx);
+      }
+
+      
     }
 
     cleanupContext(contextPtr);
@@ -475,7 +521,7 @@ public:
       localShots = executionContext->shots;
     }
 
-    nShots = localShots;
+    executor->setShots(localShots);
 
     // If emulation requested, then just grab the function
     // and invoke it with the simulator
@@ -486,7 +532,7 @@ public:
     if (getEnvBool("DISABLE_REMOTE_SEND", false))
       return;
     else {
-      future = execute(codes);
+      future = executor->execute(codes);
     }
 
     // Keep this asynchronous if requested
@@ -497,61 +543,6 @@ public:
 
     // Otherwise make this synchronous
     executionContext->result = future.get();
-  }
-
-  details::future execute(std::vector<KernelExecution> &codesToExecute) {
-
-    size_t shots = nShots.value_or(100);
-
-    serverHelper->setShots(shots);
-
-    cudaq::info("Executor creating {} jobs to execute with the {} helper.",
-                codesToExecute.size(), serverHelper->name());
-
-    // Create the Job Payload, composed of job post path, headers,
-    // and the job json messages themselves
-
-    // Apply observations if necessary
-    cudaq::spin_op *spin = nullptr;
-    if (executionContext->name == "observe") {
-      spin = executionContext->spin.value();
-    }
- 
-    auto [jobPostPath, headers, jobs] = serverHelper->createJob(codesToExecute, spin);
-
-    auto config = serverHelper->getConfig();
-
-    std::vector<details::future::Job> ids;
-    for (std::size_t i = 0; auto &job : jobs) {
-      cudaq::info("Job (name={}) created, posting to {}", codesToExecute[i].name,
-                  jobPostPath);
-
-      // Post it, get the response
-      RestClient client;
-      auto response = client.post(jobPostPath, "", job, headers);
-      cudaq::info("Job (name={}) posted, response was {}", codesToExecute[i].name,
-                  response.dump());
-
-      // Add the job id and the job name.
-      auto task_id = serverHelper->extractJobId(response);
-      if (task_id.empty()) {
-        nlohmann::json tmp(job.at("tasks"));
-        serverHelper->constructGetJobPath(tmp[0]);
-        task_id = tmp[0].at("task_id");
-      }
-      cudaq::info("Task ID is {}", task_id);
-      ids.emplace_back(task_id, codesToExecute[i].name);
-      config["output_names." + task_id] = codesToExecute[i].output_names.dump();
-
-      nlohmann::json jReorder = codesToExecute[i].mapping_reorder_idx;
-      config["reorderIdx." + task_id] = jReorder.dump();
-
-      i++;
-    }
-
-    config.insert({"shots", std::to_string(shots)});
-    std::string name = serverHelper->name();
-    return details::future(ids, name, config);
   }
 };
 } // namespace cudaq

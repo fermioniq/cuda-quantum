@@ -104,13 +104,7 @@ bool FermioniqServerHelper::keyExists(const std::string &key) const {
   return backendConfig.find(key) != backendConfig.end();
 }
 
-// Create a job for the Fermioniq quantum computer
-ServerJobPayload
-FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
-  throw std::runtime_error("Not implemented.");
-}
-
-ServerJobPayload FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes, cudaq::spin_op *spin) {
+ServerJobPayload FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   cudaq::debug("createJob");
 
   if (circuitCodes.size() != 1) {
@@ -140,30 +134,8 @@ ServerJobPayload FermioniqServerHelper::createJob(std::vector<KernelExecution> &
       config["bond_dim"] = stoi(backendConfig.at(CFG_BOND_DIM_KEY));
     }
 
-    if (spin != nullptr) {
-
-      auto obs = nlohmann::json::array();
-
-      spin->for_each_term([&](spin_op &term) {
-
-        auto spin_op = nlohmann::json::object();
-
-        auto terms = nlohmann::json::array();
-
-        auto termStr = term.to_string(false);
-        
-        terms.push_back(termStr);
-
-        auto coeff = term.get_coefficient();
-        auto coeffstr = fmt::format("{}{}{}j", coeff.real(),
-                        coeff.imag() < 0.0 ? "-" : "+", std::fabs(coeff.imag()));
-
-        terms.push_back(coeffstr);                        
-
-        obs.push_back(terms);
-      });
-
-      config["observable"] = obs;
+    if (circuitCode.user_data.contains("observable")) {
+      config["observable"] = circuitCode.user_data["observable"];
     }
 
     configs.push_back(config);
