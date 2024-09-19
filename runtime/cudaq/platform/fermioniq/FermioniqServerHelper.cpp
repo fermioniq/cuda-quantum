@@ -222,8 +222,6 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
     return;
   }
 
-  cudaq::info("refresh tokens");
-
   auto headers = getHeaders();
   nlohmann::json payload;
   payload["access_token_id"] = backendConfig.at(CFG_ACCESS_TOKEN_ID_KEY);
@@ -233,8 +231,6 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
   token = response_json["jwt_token"].get<std::string>();
   userId = response_json["user_id"].get<std::string>();
 
-  cudaq::info("Logged in as user: {}", userId);
-  //cudaq::info("token: {}", token);
   auto expDate = response_json["expiration_date"].get<std::string>();
 
 
@@ -281,14 +277,14 @@ bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
 
 // From a server message, extract the job ID
 std::string FermioniqServerHelper::extractJobId(ServerMessage &postResponse) {
-  cudaq::info("extractJobId");
+  cudaq::debug("extractJobId");
 
   return postResponse.at("id");
 }
 
 // Construct the path to get a job
 std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postResponse) {
-  cudaq::info("constructGetJobPath");
+  cudaq::debug("constructGetJobPath");
   std::string id = postResponse.at("id");
   // todo: Extract job-id from postResponse
   
@@ -298,7 +294,7 @@ std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postRespon
 
 // Overloaded version of constructGetJobPath for jobId input
 std::string FermioniqServerHelper::constructGetJobPath(std::string &jobId) {
-  cudaq::info("constructGetJobPath (jobId) from {}", jobId);
+  cudaq::debug("constructGetJobPath (jobId) from {}", jobId);
   
   auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/" + jobId;
   return ret;
@@ -310,11 +306,13 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
                                  std::string &jobID) {
   cudaq::info("processResults for job: {}", jobID);
 
+  /*
   auto &output_names = outputNames[jobID];
   for (auto &[result, info] : output_names) {
     cudaq::info("Qubit {} Name {}", info.qubitNum,
                 info.registerName);
   }
+  */
 
   RestClient client;
 
@@ -329,14 +327,14 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
   cudaq::info("got job result: {}", response_json.dump());
 
   auto metadata = response_json.at("metadata");
-  cudaq::info("metadata: {}", metadata.dump());
+  //cudaq::info("metadata: {}", metadata.dump());
   auto output = response_json.at("emulator_output");
 
   cudaq::sample_result sample_result;
 
   // to-do: restrict to 1 circuit
   for (const auto &it : output.items()) {
-    cudaq::info("result: {}", it.value().dump());
+    //cudaq::info("result: {}", it.value().dump());
     //int circuit_number = it.value().at("circuit_number");
 
     // "samples":{"00000":500,"11111":500}
@@ -394,7 +392,6 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
 
 // Get the headers for the API requests
 RestHeaders FermioniqServerHelper::getHeaders() {
-  cudaq::info("getHeaders");
   // Construct the headers
   RestHeaders headers;
   if (keyExists(CFG_API_KEY_KEY) && backendConfig.at(CFG_API_KEY_KEY) != "") {
@@ -402,7 +399,6 @@ RestHeaders FermioniqServerHelper::getHeaders() {
   }
   
   if (!this->token.empty()) {
-    cudaq::info("add token");
     headers["Authorization"] = token;
   }
   headers["Content-Type"] = "application/json";
