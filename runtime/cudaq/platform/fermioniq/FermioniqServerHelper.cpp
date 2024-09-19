@@ -102,8 +102,6 @@ private:
   /// @brief exp time of token
   std::chrono::_V2::system_clock::time_point tokenExpTime;
 
-  std::optional<double> precomputedExpValue = std::nullopt;
-
   /// @brief Helper method to retrieve the value of an environment variable.
   std::string getEnvVar(const std::string &key, const std::string &defaultVal,
                         const bool isRequired) const;
@@ -466,11 +464,6 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
     sample_result.append(executionResult);
   }
 #endif
-
-  cudaq::info("expectation of result: {}", sample_result.expectation(GlobalRegisterName));
-  sample_result.dump();
-
-  precomputedExpValue = sample_result.expectation(GlobalRegisterName);
 
   return sample_result;
 }

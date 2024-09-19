@@ -84,7 +84,7 @@ protected:
 
   /// @brief Pointer to the concrete ServerHelper, provides
   /// specific JSON payloads and POST/GET URL paths.
-  std::unique_ptr<cudaq::FermioniqServerHelper> serverHelper;
+  std::unique_ptr<cudaq::ServerHelper> serverHelper;
 
   /// @brief Mapping of general key-values for backend
   /// configuration.
@@ -201,8 +201,6 @@ public:
     // set the pre-computed expectation value.
     if (executionContext->name == "observe") {
       executionContext->expectationValue = executionContext->result.expectation(GlobalRegisterName);
-      //cudaq::info("expectation of result: {}", executionContext->result.expectation(GlobalRegisterName));
-      //executionContext->result.dump();
     }
     executionContext = nullptr;
   }
