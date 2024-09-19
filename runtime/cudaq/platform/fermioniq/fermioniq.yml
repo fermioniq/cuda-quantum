@@ -38,8 +38,3 @@ target-arguments:
     type: string
     platform-arg: bond_dim
     help-string: "Specify bond-dimension. Applies to all circuits."
-  - key: observables
-    required: false
-    type: string
-    platform-arg: observables
-    help-string: "Observable string like cudaq spinOp"

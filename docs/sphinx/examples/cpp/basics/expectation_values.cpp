@@ -20,6 +20,8 @@ struct ansatz {
 
 int main() {
 
+  
+
   // Build up your spin op algebraically
   using namespace cudaq::spin;
   cudaq::spin_op h = 5.907 - 2.1433 * x(0) * x(1) - 2.1433 * y(0) * y(1) +
@@ -29,5 +31,9 @@ int main() {
   // parameters for the kernel
   double energy = cudaq::observe(ansatz{}, h, .59);
   printf("Energy is %lf\n", energy);
+
+  //auto counts = cudaq::sample(ansatz{}, .59);
+  //counts.dump();
+
   return 0;
 }

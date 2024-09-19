@@ -46,6 +46,7 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "mlir/Transforms/Passes.h"
+#include "FermioniqServerHelper.h"
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
@@ -79,20 +80,13 @@ protected:
   /// @brief Additional passes to run after the codegen-specific passes
   std::string postCodeGenPasses = "";
 
-  // Pointer to the concrete Executor for this QPU
-  std::unique_ptr<cudaq::Executor> executor;
-
   /// @brief Pointer to the concrete ServerHelper, provides
   /// specific JSON payloads and POST/GET URL paths.
-  std::unique_ptr<cudaq::ServerHelper> serverHelper;
+  std::unique_ptr<cudaq::FermioniqServerHelper> serverHelper;
 
   /// @brief Mapping of general key-values for backend
   /// configuration.
   std::map<std::string, std::string> backendConfig;
-
-  /// @brief Flag indicating whether we should emulate
-  /// execution locally.
-  bool emulate = false;
 
   /// @brief Flag indicating whether we should print the IR.
   bool printIR = false;
@@ -107,28 +101,6 @@ protected:
   /// `-mlir-print-ir-after-all` in `cudaq-opt`.
   bool enablePrintMLIREachPass = false;
 
-  /// @brief If we are emulating locally, keep track
-  /// of JIT engines for invoking the kernels.
-  std::vector<mlir::ExecutionEngine *> jitEngines;
-
-  /// @brief Invoke the kernel in the JIT engine
-  void invokeJITKernel(mlir::ExecutionEngine *jit,
-                       const std::string &kernelName) {
-    auto funcPtr = jit->lookup(std::string("__nvqpp__mlirgen__") + kernelName);
-    if (!funcPtr) {
-      throw std::runtime_error(
-          "cudaq::builder failed to get kernelReg function.");
-    }
-    reinterpret_cast<void (*)()>(*funcPtr)();
-  }
-
-  /// @brief Invoke the kernel in the JIT engine and then delete the JIT engine.
-  void invokeJITKernelAndRelease(mlir::ExecutionEngine *jit,
-                                 const std::string &kernelName) {
-    invokeJITKernel(jit, kernelName);
-    delete jit;
-  }
-
   virtual std::tuple<mlir::ModuleOp, mlir::MLIRContext *, void *>
   extractQuakeCodeAndContext(const std::string &kernelName, void *data) = 0;
   virtual void cleanupContext(mlir::MLIRContext *context) { return; }
@@ -138,8 +110,6 @@ public:
   FermioniqBaseQPU() : QPU() {
     std::filesystem::path cudaqLibPath{cudaq::getCUDAQLibraryPath()};
     platformPath = cudaqLibPath.parent_path().parent_path() / "targets";
-    // Default is to run sampling via the remote rest call
-    executor = std::make_unique<cudaq::Executor>();
   }
 
   FermioniqBaseQPU(FermioniqBaseQPU &&) = delete;
@@ -151,7 +121,7 @@ public:
 
   /// @brief Return true if the current backend is a simulator
   /// @return
-  bool isSimulator() override { return emulate; }
+  bool isSimulator() override { return false; }
 
   /// @brief Return true if the current backend supports conditional feedback
   bool supportsConditionalFeedback() override {
@@ -161,22 +131,21 @@ public:
   /// Provide the number of shots
   void setShots(int _nShots) override {
     nShots = _nShots;
-    executor->setShots(static_cast<std::size_t>(_nShots));
   }
 
   /// Clear the number of shots
   void clearShots() override { nShots = std::nullopt; }
-  virtual bool isRemote() override { return !emulate; }
+  virtual bool isRemote() override { return true; }
 
   /// @brief Return true if locally emulating a remote QPU
-  virtual bool isEmulated() override { return emulate; }
+  virtual bool isEmulated() override { return false; }
 
   /// @brief Set the noise model, only allow this for
   /// emulation.
   void setNoiseModel(const cudaq::noise_model *model) override {
-    if (!emulate && model)
+    if (!model)
       throw std::runtime_error(
-          "Noise modeling is not allowed on remote physical quantum backends.");
+          "Noise modeling requires a model.");
 
     noiseModel = model;
   }
@@ -240,10 +209,6 @@ public:
         }
       }
     }
-
-    // Turn on emulation mode if requested
-    auto iter = backendConfig.find("emulate");
-    emulate = iter != backendConfig.end() && iter->second == "true";
 
     // Print the IR if requested
     printIR = getEnvBool("CUDAQ_DUMP_JIT_IR", printIR);
@@ -315,15 +280,16 @@ public:
     qpuName = mutableBackend;
 
     // Create the ServerHelper for this QPU and give it the backend config
-    serverHelper = cudaq::registry::get<cudaq::ServerHelper>(qpuName);
+    auto sh = registry::get<cudaq::ServerHelper>(qpuName);
+    ServerHelper* sh_raw = sh.release();
+    FermioniqServerHelper *fsh_raw = dynamic_cast<FermioniqServerHelper *>(sh_raw);
+    std::unique_ptr<FermioniqServerHelper> fsh = std::unique_ptr<FermioniqServerHelper>(fsh_raw);
+    serverHelper.swap(fsh);
     if (serverHelper == nullptr) {
       throw std::runtime_error("No server helper found");
     }
     serverHelper->initialize(backendConfig);
     serverHelper->updatePassPipeline(platformPath, passPipelineConfig);
-
-    // Give the server helper to the executor
-    executor->setServerHelper(serverHelper.get());
   }
 
   /// @brief Conditionally form an output_names JSON object if this was for QIR
@@ -449,75 +415,8 @@ public:
     executionContext->reorderIdx = mapping_reorder_idx;
 
     std::vector<std::pair<std::string, mlir::ModuleOp>> modules;
-    // Apply observations if necessary
-    if (executionContext->name == "observe") {
-      /*
-      mapping_reorder_idx.clear();
-      runPassPipeline("canonicalize,cse", moduleOp);
-      cudaq::spin_op &spin = *executionContext->spin.value();
-      for (const auto &term : spin) {
-        if (term.is_identity())
-          continue;
-
-        // Get the ansatz
-        auto ansatz = moduleOp.lookupSymbol<mlir::func::FuncOp>(
-            std::string("__nvqpp__mlirgen__") + kernelName);
-
-        // Create a new Module to clone the ansatz into it
-        auto tmpModuleOp = builder.create<mlir::ModuleOp>();
-        tmpModuleOp.push_back(ansatz.clone());
-
-        // Extract the binary symplectic encoding
-        auto [binarySymplecticForm, coeffs] = term.get_raw_data();
-
-        // Create the pass manager, add the quake observe ansatz pass
-        // and run it followed by the canonicalizer
-        mlir::PassManager pm(&context);
-        mlir::OpPassManager &optPM = pm.nest<mlir::func::FuncOp>();
-        optPM.addPass(
-            cudaq::opt::createObserveAnsatzPass(binarySymplecticForm[0]));
-        if (disableMLIRthreading || enablePrintMLIREachPass)
-          tmpModuleOp.getContext()->disableMultithreading();
-        if (enablePrintMLIREachPass)
-          pm.enableIRPrinting();
-        if (failed(pm.run(tmpModuleOp)))
-          throw std::runtime_error("Could not apply measurements to ansatz.");
-        runPassPipeline(passPipelineConfig, tmpModuleOp);
-        modules.emplace_back(term.to_string(false), tmpModuleOp);
-      }
-
-      auto ansatz = moduleOp.lookupSymbol<mlir::func::FuncOp>(
-          std::string("__nvqpp__mlirgen__") + kernelName);
-
-      // Create a new Module to clone the ansatz into it
-      auto tmpModuleOp = builder.create<mlir::ModuleOp>();
-      tmpModuleOp.push_back(ansatz.clone());
-      
-      mlir::OpPassManager &optPM = pm.nest<mlir::func::FuncOp>();
-      optPM.addPass(
-        cudaq::opt::create
-
-      if (failed(pm.run(tmpModuleOp)))
-          throw std::runtime_error("Could not apply measurements to ansatz.");
-      runPassPipeline(passPipelineConfig, tmpModuleOp);
-      modules.emplace_back(kernelName, tmpModuleOp);
-      */
-      modules.emplace_back(kernelName, moduleOp);
-    } else {
-      modules.emplace_back(kernelName, moduleOp);
-    }
-
-    if (emulate) {
-      // If we are in emulation mode, we need to first get a
-      // full QIR representation of the code. Then we'll map to
-      // an LLVM Module, create a JIT ExecutionEngine pointer
-      // and use that for execution
-      for (auto &[name, module] : modules) {
-        auto clonedModule = module.clone();
-        jitEngines.emplace_back(
-            cudaq::createQIRJITEngine(clonedModule, codegenTranslation));
-      }
-    }
+    
+    modules.emplace_back(kernelName, moduleOp);
 
     // Get the code gen translation
     auto translation = cudaq::getTranslation(codegenTranslation);
@@ -572,97 +471,22 @@ public:
     auto codes = lowerQuakeCode(kernelName, args);
     // Get the current execution context and number of shots
     std::size_t localShots = 1000;
-    if (executionContext->shots != std::numeric_limits<std::size_t>::max() &&
-        executionContext->shots != 0)
+    if (executionContext->shots != std::numeric_limits<std::size_t>::max() && executionContext->shots != 0) {
       localShots = executionContext->shots;
+    }
 
-    executor->setShots(localShots);
+    nShots = localShots;
 
     // If emulation requested, then just grab the function
     // and invoke it with the simulator
     cudaq::details::future future;
-    if (emulate) {
-
-      // Fetch the thread-specific seed outside and then pass it inside.
-      std::size_t seed = cudaq::get_random_seed();
-
-      // Launch the execution of the simulated jobs asynchronously
-      future = cudaq::details::future(std::async(
-          std::launch::async,
-          [&, codes, localShots, kernelName, seed,
-           reorderIdx = executionContext->reorderIdx,
-           localJIT = std::move(jitEngines)]() mutable -> cudaq::sample_result {
-            std::vector<cudaq::ExecutionResult> results;
-
-            // If seed is 0, then it has not been set.
-            if (seed > 0)
-              cudaq::set_random_seed(seed);
-
-            bool hasConditionals =
-                cudaq::kernelHasConditionalFeedback(kernelName);
-            if (hasConditionals && codes.size() > 1)
-              throw std::runtime_error("error: spin_ops not yet supported with "
-                                       "kernels containing conditionals");
-            if (hasConditionals) {
-              executor->setShots(1); // run one shot at a time
-
-              // If this is adaptive profile and the kernel has conditionals,
-              // then you have to run the code localShots times instead of
-              // running the kernel once and sampling the state localShots
-              // times.
-              if (hasConditionals) {
-                // Populate `counts` one shot at a time
-                cudaq::sample_result counts;
-                for (std::size_t shot = 0; shot < localShots; shot++) {
-                  cudaq::ExecutionContext context("sample", 1);
-                  context.hasConditionalsOnMeasureResults = true;
-                  cudaq::getExecutionManager()->setExecutionContext(&context);
-                  invokeJITKernel(localJIT[0], kernelName);
-                  cudaq::getExecutionManager()->resetExecutionContext();
-                  counts += context.result;
-                }
-                // Process `counts` and store into `results`
-                for (auto &regName : counts.register_names()) {
-                  results.emplace_back(counts.to_map(regName), regName);
-                  results.back().sequentialData =
-                      counts.sequential_data(regName);
-                }
-              }
-            }
-
-            for (std::size_t i = 0; i < codes.size(); i++) {
-              cudaq::ExecutionContext context("sample", localShots);
-              context.reorderIdx = reorderIdx;
-              cudaq::getExecutionManager()->setExecutionContext(&context);
-              invokeJITKernelAndRelease(localJIT[i], kernelName);
-              cudaq::getExecutionManager()->resetExecutionContext();
-
-              // If there are multiple codes, this is likely a spin_op.
-              // If so, use the code name instead of the global register.
-              if (codes.size() > 1) {
-                results.emplace_back(context.result.to_map(), codes[i].name);
-                results.back().sequentialData =
-                    context.result.sequential_data();
-              } else {
-                // For each register, add the context results into result.
-                for (auto &regName : context.result.register_names()) {
-                  results.emplace_back(context.result.to_map(regName), regName);
-                  results.back().sequentialData =
-                      context.result.sequential_data(regName);
-                }
-              }
-            }
-            localJIT.clear();
-            return cudaq::sample_result(results);
-          }));
-
-    } else {
-      // Execute the codes produced in quake lowering
-      // Allow developer to disable remote sending (useful for debugging IR)
-      if (getEnvBool("DISABLE_REMOTE_SEND", false))
-        return;
-      else
-        future = executor->execute(codes);
+  
+    // Execute the codes produced in quake lowering
+    // Allow developer to disable remote sending (useful for debugging IR)
+    if (getEnvBool("DISABLE_REMOTE_SEND", false))
+      return;
+    else {
+      future = execute(codes);
     }
 
     // Keep this asynchronous if requested
@@ -673,6 +497,61 @@ public:
 
     // Otherwise make this synchronous
     executionContext->result = future.get();
+  }
+
+  details::future execute(std::vector<KernelExecution> &codesToExecute) {
+
+    size_t shots = nShots.value_or(100);
+
+    serverHelper->setShots(shots);
+
+    cudaq::info("Executor creating {} jobs to execute with the {} helper.",
+                codesToExecute.size(), serverHelper->name());
+
+    // Create the Job Payload, composed of job post path, headers,
+    // and the job json messages themselves
+
+    // Apply observations if necessary
+    cudaq::spin_op *spin = nullptr;
+    if (executionContext->name == "observe") {
+      spin = executionContext->spin.value();
+    }
+ 
+    auto [jobPostPath, headers, jobs] = serverHelper->createJob(codesToExecute, spin);
+
+    auto config = serverHelper->getConfig();
+
+    std::vector<details::future::Job> ids;
+    for (std::size_t i = 0; auto &job : jobs) {
+      cudaq::info("Job (name={}) created, posting to {}", codesToExecute[i].name,
+                  jobPostPath);
+
+      // Post it, get the response
+      RestClient client;
+      auto response = client.post(jobPostPath, "", job, headers);
+      cudaq::info("Job (name={}) posted, response was {}", codesToExecute[i].name,
+                  response.dump());
+
+      // Add the job id and the job name.
+      auto task_id = serverHelper->extractJobId(response);
+      if (task_id.empty()) {
+        nlohmann::json tmp(job.at("tasks"));
+        serverHelper->constructGetJobPath(tmp[0]);
+        task_id = tmp[0].at("task_id");
+      }
+      cudaq::info("Task ID is {}", task_id);
+      ids.emplace_back(task_id, codesToExecute[i].name);
+      config["output_names." + task_id] = codesToExecute[i].output_names.dump();
+
+      nlohmann::json jReorder = codesToExecute[i].mapping_reorder_idx;
+      config["reorderIdx." + task_id] = jReorder.dump();
+
+      i++;
+    }
+
+    config.insert({"shots", std::to_string(shots)});
+    std::string name = serverHelper->name();
+    return details::future(ids, name, config);
   }
 };
 } // namespace cudaq
