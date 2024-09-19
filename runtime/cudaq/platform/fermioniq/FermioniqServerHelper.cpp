@@ -102,6 +102,8 @@ private:
   /// @brief exp time of token
   std::chrono::_V2::system_clock::time_point tokenExpTime;
 
+  std::optional<double> precomputedExpValue = std::nullopt;
+
   /// @brief Helper method to retrieve the value of an environment variable.
   std::string getEnvVar(const std::string &key, const std::string &defaultVal,
                         const bool isRequired) const;
@@ -404,18 +406,16 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
   
   cudaq::info("got job result: {}", response_json.dump());
 
-  std::vector<ExecutionResult> execution_results;
-  
-  bool all_circuit_names_same = std::adjacent_find(circuit_names.begin(), circuit_names.end(), std::not_equal_to<>() ) == circuit_names.end();
-
   auto metadata = response_json.at("metadata");
   cudaq::info("metadata: {}", metadata.dump());
   auto output = response_json.at("emulator_output");
-  int index = 0;
+
+  cudaq::sample_result sample_result;
+
+  // to-do: restrict to 1 circuit
   for (const auto &it : output.items()) {
     cudaq::info("result: {}", it.value().dump());
-    int circuit_number = it.value().at("circuit_number");
-    cudaq::info("circuit: {}", circuit_number);
+    //int circuit_number = it.value().at("circuit_number");
 
     // "samples":{"00000":500,"11111":500}
     auto output = it.value().at("output");
@@ -426,17 +426,13 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
       sample_dict[qubit_str] = n_observed;
     }
 
-    cudaq::info("index name: {}", circuit_names[index]);
-    ExecutionResult exec_result(
-      sample_dict,
-      all_circuit_names_same ? GlobalRegisterName : circuit_names[index]);
+    ExecutionResult exec_result(sample_dict, 3.337);
 
-    execution_results.push_back(exec_result);
-    index++;
+    sample_result = cudaq::sample_result(exec_result);
+    break;
   }
 
-  auto sample_result = cudaq::sample_result(execution_results);
-
+#if 0
   // First reorder the global register by QIR qubit number.
   std::vector<std::size_t> qirQubitMeasurements;
   qirQubitMeasurements.reserve(output_names.size());
@@ -463,14 +459,18 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
   }
 
   // We will also make registers for each result using output_names.
-  #if 0
   for (auto &[result, info] : output_names) {
     cudaq::sample_result singleBitResult = sample_result.get_marginal({result});
     ExecutionResult executionResult{singleBitResult.to_map(),
                                     info.registerName};
     sample_result.append(executionResult);
   }
-  #endif
+#endif
+
+  cudaq::info("expectation of result: {}", sample_result.expectation(GlobalRegisterName));
+  sample_result.dump();
+
+  precomputedExpValue = sample_result.expectation(GlobalRegisterName);
 
   return sample_result;
 }

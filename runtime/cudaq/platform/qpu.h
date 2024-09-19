@@ -79,6 +79,7 @@ protected:
       // let it compute the expectation value instead of
       // manually looping over terms, applying basis change ops,
       // and computing <ZZ..ZZZ>
+
       if (localContext->canHandleObserve) {
         auto [exp, data] = cudaq::measure(H);
         localContext->expectationValue = exp;
