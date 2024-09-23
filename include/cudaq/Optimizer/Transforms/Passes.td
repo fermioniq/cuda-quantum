@@ -184,7 +184,8 @@ def DelayMeasurements : Pass<"delay-measurements", "mlir::func::FuncOp"> {
     "Move measurements as late as possible";
 
   let description = [{
-    Move measurements as late as possible. This is useful for a Base Profile QIR program.
+    Move measurements as late as possible. This is useful for a Base Profile
+    QIR program.
   }];
 
   let constructor = "cudaq::opt::createDelayMeasurementsPass()";
@@ -211,6 +212,49 @@ def DecompositionPass: Pass<"decomposition", "mlir::ModuleOp"> {
                "other patterns are filtered out">,
     Option<"testConvergence", "test-convergence", "bool", /*default=*/"false",
            "Test only: Fail pass on non-convergence to detect cyclic patterns">,
+  ];
+}
+
+def DependencyAnalysis : Pass<"dep-analysis", "mlir::ModuleOp"> {
+  let summary = "Maps qubits and reorders operations based on dependency graph.";
+  let description = [{
+    A dependency graph is a Directed Acyclic Graph (DAG) where each node
+    represents an operation, and each edge represents a "depends on" relation
+    between that operation and another operation. For example, in the following
+    snippet the `x` operation depends on the `h` operation because it is applied
+    to the same qubit (`q`), so the `h` operation must happen before the `x`
+    operation:
+    ```c++
+      cudaq::qubit q;
+      x(q);
+      h(q);
+    ```
+
+    Once a dependency graph is created, it is then scheduled, assigning each
+    operation a virtual cycle. Operations that don't depend on each other may
+    be scheduled at the same cycle. However, an operation that depends on a
+    second operation must be scheduled after the second operation. The
+    scheduling algorithm tries to pack operations as densely as possible,
+    minimizing the number of cycles between operations.
+
+    From this dependency graph, we can calculate the lifetime of a qubit: from
+    the cycle in which it is first used through the cycle in which it is last
+    used. If two virtual qubits have non-overlapping lifetimes, they can be
+    assigned to the same physical qubit, as every virtual qubit is assumed to be
+    fully reset before release. Failure to fully reset virtual qubits before
+    release is undefinied behavior, and will likely lead to incorrect output
+    when running DependencyAnalysis.
+  }];
+
+  let dependentDialects = ["quake::QuakeDialect"];
+
+  let statistics = [
+    Statistic<"numVirtualQubits", "num-virtual-qubits",
+              "Number of virtual qubits used">,
+    Statistic<"numPhysicalQubits", "num-physical-qubits",
+              "Number of phyiscal qubits used">,
+    Statistic<"numCycles", "num-cycles",
+              "Length of kernel in cycles">,
   ];
 }
 
@@ -669,6 +713,72 @@ def ObserveAnsatz : Pass<"observe-ansatz", "mlir::func::FuncOp"> {
   ];
 }
 
+def DeleteStates : Pass<"delete-states", "mlir::ModuleOp"> {
+  let summary =
+    "Remove unnecessary creation of new states from data";
+  let description = [{
+    Argument synthesis for state pointers for remote simulation substitutes state
+    argument by a new state created from materialized data. The new state is not
+    always necessary, and is not deleted from the heap. This pass:
+
+    - Replaces state by its data if possible
+    - Adds delete calls before exits if not possible to replace a new state
+
+    For example, the new state is replaced by its data if only used in `quake.init_state`
+    instruction:
+
+    Before DeleteStates (delete-states):
+    ```
+    func.func @foo() attributes {"cudaq-entrypoint", "cudaq-kernel", no_this} {
+      %c8_i64 = arith.constant 8 : i64
+      %0 = cc.address_of @foo.rodata_synth_0 : !cc.ptr<!cc.array<complex<f32> x 8>>
+      %3 = cc.cast %0 : (!cc.ptr<!cc.array<complex<f32> x 8>>) -> !cc.ptr<i8>
+      %4 = call @__nvqpp_cudaq_state_createFromData_fp32(%3, %c8_i64) : (!cc.ptr<i8>, i64) -> !cc.ptr<!cc.state>
+      %5 = call @__nvqpp_cudaq_state_numberOfQubits(%4) : (!cc.ptr<!cc.state>) -> i64
+      %6 = quake.alloca !quake.veq<?>[%5 : i64]
+      %7 = quake.init_state %6, %4 : (!quake.veq<?>, !cc.ptr<!cc.state>) -> !quake.veq<?>
+
+      return
+    }
+    ```
+
+    After DeleteStates (delete-states):
+    ```
+    module {
+    func.func @foo() attributes {"cudaq-entrypoint", "cudaq-kernel", no_this} {
+      %c8_i64 = arith.constant 8 : i64
+      %0 = cc.address_of @foo.rodata_synth_0 : !cc.ptr<!cc.array<complex<f32> x 8>>
+      %3 = quake.alloca !quake.veq<3>
+      %4 = quake.init_state %3, %0 : (!quake.veq<3>, !cc.ptr<!cc.array<complex<f32> x 4>>) -> !quake.veq<3>
+      return
+    }
+    ```
+
+    Otherwise, if state is used in another instructions and cannot be easily
+    replaced, the new state is deleted before exits:
+
+    Before DeleteStates (delete-states):
+    ```  func.func @foo() attributes {"cudaq-entrypoint", "cudaq-kernel", no_this} {
+      ...
+      %4 = call @__nvqpp_cudaq_state_createFromData_fp32(%3, %c8_i64) : (!cc.ptr<i8>, i64) -> !cc.ptr<!cc.state>
+      call @__nvqpp__mlirgen__sub_kernel(%4) : (!cc.ptr<!cc.state>) -> ()
+      return
+    }
+    ```
+
+    After DeleteStates (delete-states):
+    ```
+    func.func @foo() attributes {"cudaq-entrypoint", "cudaq-kernel", no_this} {
+      ...
+      %4 = call @__nvqpp_cudaq_state_createFromData_fp32(%3, %c8_i64) : (!cc.ptr<i8>, i64) -> !cc.ptr<!cc.state>
+      call @__nvqpp__mlirgen__sub_kernel(%4) : (!cc.ptr<!cc.state>) -> ()
+      call @__nvqpp_cudaq_state_delete(%4) : (!cc.ptr<!cc.state>) -> ()
+      return
+    }
+    ```
+  }];
+}
+
 def StatePreparation : Pass<"state-prep", "mlir::ModuleOp"> {
   let summary =
     "Convert state vector data into gates";
@@ -818,6 +928,35 @@ def RegToMem : Pass<"regtomem", "mlir::func::FuncOp"> {
     type values.
   }];
   let dependentDialects = ["cudaq::cc::CCDialect", "quake::QuakeDialect"];
+}
+
+// UnitarySynthesis is a module pass because it may modify the `ModuleOp` by
+// adding new `FuncOp`(s).
+def UnitarySynthesis : Pass<"unitary-synthesis", "mlir::ModuleOp"> {
+  let summary = 
+    "Convert a custom quantum operation into sequence of native quantum gates.";
+  let description = [{
+    Given a custom quantum operation specified in the form of its concrete
+    unitary matrix, convert it into a sequence of native quantum gates.
+
+    For example,
+    ```mlir
+    quake.custom_op @__nvqpp__mlirgen__custom_x_generator_1.rodata %0 : (!quake.ref) -> ()
+    ```
+    This call will be converted to an `ApplyOp`.
+    ```mlir
+    quake.apply @__nvqpp__mlirgen__custom_x_generator_1.kernel %[[VAL_0]] : (!quake.ref) -> ()
+    ```
+    The function has sequence of decomposed gates.
+    ```mlir
+    func.func private @__nvqpp__mlirgen__custom_x_generator_1.kernel(%arg0: !quake.ref) {
+        %cst = arith.constant 1.5707963267948966 : f64        
+        quake.ry (%cst) %arg0 : (f64, !quake.ref) -> ()
+        ...
+        return
+      }
+    ```
+  }];
 }
 
 def UnwindLowering : Pass<"unwind-lowering", "mlir::func::FuncOp"> {

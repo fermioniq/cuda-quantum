@@ -70,6 +70,10 @@ available_backends=`\
         if grep -q "library-mode-execution-manager: photonics" $file ; then 
           continue
         fi 
+        # Skip optimization test targets
+        if [[ $file == *"opt-test.yml" ]]; then
+          continue
+        fi
         platform=$(cat $file | grep "platform-qpu:")
         qpu=${platform##* }
         requirements=$(cat $file | grep "gpu-requirements:")
@@ -126,8 +130,9 @@ echo "============================="
 echo "==        C++ Tests        =="
 echo "============================="
 
+# Note: piping the `find` results through `sort` guarantees repeatable ordering.
 tmpFile=$(mktemp)
-for ex in `find examples/ -name '*.cpp'`;
+for ex in `find examples/ -name '*.cpp' | sort`;
 do
     filename=$(basename -- "$ex")
     filename="${filename%.*}"
@@ -173,7 +178,7 @@ do
             # Skipped long-running tests (variational optimization loops) for the "remote-mqpu" target to keep CI runtime managable.
             # A simplified test for these use cases is included in the 'test/Remote-Sim/' test suite. 
             # Skipped tests that require passing kernel callables to entry-point kernels for the "remote-mqpu" target.
-            if [[ "$ex" == *"vqe_h2"* || "$ex" == *"qaoa_maxcut"* || "$ex" == *"gradients"* || "$ex" == *"grover"* || "$ex" == *"multi_controlled_operations"* || "$ex" == *"phase_estimation"* || "$ex" == *"trotter_kernel"* || "$ex" == *"builder.cpp"* ]];
+            if [[ "$ex" == *"vqe_h2"* || "$ex" == *"qaoa_maxcut"* || "$ex" == *"gradients"* || "$ex" == *"grover"* || "$ex" == *"multi_controlled_operations"* || "$ex" == *"phase_estimation"* || "$ex" == *"trotter_kernel_mode"* || "$ex" == *"builder.cpp"* ]];
             then
                 let "skipped+=1"
                 echo "Skipping $t target.";
@@ -254,13 +259,20 @@ echo "============================="
 echo "==      Python Tests       =="
 echo "============================="
 
+# Note: some of the tests do their own "!pip install ..." during the test, and
+# for that to work correctly on the first time, the user site directory (e.g.
+# ~/.local/lib/python3.10/site-packages) must already exist, so create it here.
+mkdir -p $(python3 -m site --user-site)
+
 # Note divisive_clustering_src is not currently in the Published container under
 # the "examples" folder, but the Publishing workflow moves all examples from
 # docs/sphinx/examples into the examples directory for the purposes of the
 # container validation. The divisive_clustering_src Python files are used by the
 # Divisive_clustering.ipynb notebook, so they are tested elsewhere and should be
-# excluded from this test.
-for ex in `find examples/ -name '*.py' -not -path '*/divisive_clustering_src/*'`;
+# excluded from this test. 
+# Same with afqmc.
+# Note: piping the `find` results through `sort` guarantees repeatable ordering.
+for ex in `find examples/ -name '*.py' -not -path '*/divisive_clustering_src/*' -not -path '*/afqmc_src/*' | sort`;
 do 
     filename=$(basename -- "$ex")
     filename="${filename%.*}"
