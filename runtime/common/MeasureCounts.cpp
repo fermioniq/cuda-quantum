@@ -371,7 +371,6 @@ bool sample_result::has_expectation(const std::string_view registerName) const {
 
 double sample_result::expectation(const std::string_view registerName) const {
   double aver = 0.0;
-  printf("calc expectation for register_name: %s\n", registerName.data());
   auto iter = sampleResults.find(registerName.data());
   if (iter == sampleResults.end()) {
     return 0.0;
@@ -383,21 +382,14 @@ double sample_result::expectation(const std::string_view registerName) const {
 
   auto counts = iter->second.counts;
   for (auto &kv : counts) {
-    printf("calc probability for: %s\n", kv.first.c_str());
     auto par = has_even_parity(kv.first);
-    printf("has_even_parity: %d\n", par);
-    
+
     auto p = probability(kv.first, registerName);
-    printf("probability: %f\n", p);
     if (!par) {
       p = -p;
     }
-    printf("probability after applied parity: %f\n", p);
     aver += p;
-    printf("total: %f\n", aver);
   }
-
-  printf("RETURN expectation: %f\n", aver);
 
   return aver;
 }
@@ -439,6 +431,15 @@ sample_result::to_map(const std::string_view registerName) const {
     return CountsDictionary();
 
   return iter->second.counts;
+}
+
+ExecutionResult sample_result::get_result_for_register(
+    const std::string_view registerName) const {
+  auto iter = sampleResults.find(registerName.data());
+  if (iter == sampleResults.end())
+    return ExecutionResult();
+
+  return iter->second;
 }
 
 sample_result
