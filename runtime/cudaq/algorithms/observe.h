@@ -111,20 +111,14 @@ runObservation(KernelFunctor &&k, cudaq::spin_op &h, quantum_platform &platform,
   // It is possible for the expectation value to be
   // precomputed, if so grab it and set it so the client gets it
   if (ctx->expectationValue.has_value()) {
-    printf("Has Value apparently\n");
     expectationValue = ctx->expectationValue.value_or(0.0);
-  }
-  else {
-    printf("calc value ourselves\n");
+  } else {
     // If not, we have everything we need to compute it.
     double sum = 0.0;
     h.for_each_term([&](spin_op &term) {
       if (term.is_identity()) {
-        printf("here identity\n");
         sum += term.get_coefficient().real();
-      }
-      else {
-        printf("calc exp\n");
+      } else {
         sum += data.expectation(term.to_string(false)) *
                term.get_coefficient().real();
       }
