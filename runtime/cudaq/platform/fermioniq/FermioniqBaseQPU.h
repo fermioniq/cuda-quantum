@@ -46,7 +46,7 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "mlir/Transforms/Passes.h"
-//#include "FermioniqServerHelper.h"
+// #include "FermioniqServerHelper.h"
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
@@ -105,7 +105,7 @@ protected:
   extractQuakeCodeAndContext(const std::string &kernelName, void *data) = 0;
   virtual void cleanupContext(mlir::MLIRContext *context) { return; }
 
-    // Pointer to the concrete Executor for this QPU
+  // Pointer to the concrete Executor for this QPU
   std::unique_ptr<cudaq::Executor> executor;
 
 public:
@@ -150,8 +150,7 @@ public:
   /// emulation.
   void setNoiseModel(const cudaq::noise_model *model) override {
     if (!model)
-      throw std::runtime_error(
-          "Noise modeling requires a model.");
+      throw std::runtime_error("Noise modeling requires a model.");
 
     noiseModel = model;
   }
@@ -171,11 +170,15 @@ public:
   /// Reset the execution context
   void resetExecutionContext() override {
 
-    cudaq::info("reset execution context");
+    cudaq::debug("reset execution context");
 
     // set the pre-computed expectation value.
     if (executionContext->name == "observe") {
-      executionContext->expectationValue = executionContext->result.expectation(GlobalRegisterName);
+      auto expectation =
+          executionContext->result.expectation(GlobalRegisterName);
+      cudaq::debug("got expectation: {}", expectation);
+      executionContext->expectationValue =
+          executionContext->result.expectation(GlobalRegisterName);
     }
     executionContext = nullptr;
   }
@@ -236,7 +239,7 @@ public:
     /// pipeline.
     std::string fileName = mutableBackend + std::string(".yml");
     auto configFilePath = platformPath / fileName;
-    cudaq::info("Config file path = {}", configFilePath.string());
+    cudaq::debug("Config file path = {}", configFilePath.string());
     std::ifstream configFile(configFilePath.string());
     std::string configYmlContents((std::istreambuf_iterator<char>(configFile)),
                                   std::istreambuf_iterator<char>());
@@ -310,9 +313,9 @@ public:
     // Form an output_names mapping from codeStr
     nlohmann::json output_names;
     std::vector<char> bitcode;
-    
+
     if (codegenTranslation.starts_with("qir")) {
-    
+
       // decodeBase64 will throw a runtime exception if it fails
       if (llvm::decodeBase64(codeStr, bitcode)) {
         cudaq::info("Could not decode codeStr {}", codeStr);
@@ -328,7 +331,7 @@ public:
         for (llvm::Function &func : *module) {
           if (func.hasFnAttribute("entry_point") &&
               func.hasFnAttribute("output_names")) {
-          
+
             output_names = nlohmann::json::parse(
                 func.getFnAttribute("output_names").getValueAsString());
             break;
@@ -336,8 +339,6 @@ public:
         }
       }
     }
-
-    
 
     return output_names;
   }
@@ -427,7 +428,7 @@ public:
     executionContext->reorderIdx = mapping_reorder_idx;
 
     std::vector<std::pair<std::string, mlir::ModuleOp>> modules;
-    
+
     modules.emplace_back(kernelName, moduleOp);
 
     // Get the code gen translation
@@ -454,9 +455,8 @@ public:
       } else {
         j = formOutputNames(codegenTranslation, codeStr);
       }
-      
 
-      cudaq::info("Output names: {}", j.dump());
+      cudaq::debug("Output names: {}", j.dump());
 
       if (executionContext->name == "observe") {
 
@@ -467,32 +467,30 @@ public:
         auto obs = nlohmann::json::array();
 
         spin->for_each_term([&](spin_op &term) {
-
           auto spin_op = nlohmann::json::object();
 
           auto terms = nlohmann::json::array();
 
           auto termStr = term.to_string(false);
-          
+
           terms.push_back(termStr);
 
           auto coeff = term.get_coefficient();
           auto coeff_str = fmt::format("{}{}{}j", coeff.real(),
-                          coeff.imag() < 0.0 ? "-" : "+", std::fabs(coeff.imag()));
+                                       coeff.imag() < 0.0 ? "-" : "+",
+                                       std::fabs(coeff.imag()));
 
-          terms.push_back(coeff_str);                        
+          terms.push_back(coeff_str);
 
           obs.push_back(terms);
         });
 
         user_data["observable"] = obs;
-        
+
         codes.emplace_back(name, codeStr, j, mapping_reorder_idx, user_data);
       } else {
         codes.emplace_back(name, codeStr, j, mapping_reorder_idx);
       }
-
-      
     }
 
     cleanupContext(contextPtr);
@@ -517,7 +515,8 @@ public:
     auto codes = lowerQuakeCode(kernelName, args);
     // Get the current execution context and number of shots
     std::size_t localShots = 1000;
-    if (executionContext->shots != std::numeric_limits<std::size_t>::max() && executionContext->shots != 0) {
+    if (executionContext->shots != std::numeric_limits<std::size_t>::max() &&
+        executionContext->shots != 0) {
       localShots = executionContext->shots;
     }
 
@@ -526,7 +525,7 @@ public:
     // If emulation requested, then just grab the function
     // and invoke it with the simulator
     cudaq::details::future future;
-  
+
     // Execute the codes produced in quake lowering
     // Allow developer to disable remote sending (useful for debugging IR)
     if (getEnvBool("DISABLE_REMOTE_SEND", false))

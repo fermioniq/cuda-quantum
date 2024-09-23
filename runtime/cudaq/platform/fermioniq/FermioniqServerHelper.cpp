@@ -5,6 +5,7 @@
  * This source code and the accompanying materials are made available under    *
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
+#include "FermioniqServerHelper.h"
 #include "common/Logger.h"
 #include "common/RestClient.h"
 #include "common/ServerHelper.h"
@@ -14,7 +15,6 @@
 #include <fstream>
 #include <map>
 #include <thread>
-#include "FermioniqServerHelper.h"
 
 namespace cudaq {
 
@@ -24,13 +24,18 @@ void FermioniqServerHelper::initialize(BackendConfig config) {
 
   parseConfigForCommonParams(config);
 
-  backendConfig[CFG_URL_KEY] = getEnvVar("FERMIONIQ_API_BASE_URL", DEFAULT_URL, false);
-  backendConfig[CFG_API_KEY_KEY] = getEnvVar("FERMIONIQ_API_KEY", DEFAULT_API_KEY, false);
-  
-  backendConfig[CFG_ACCESS_TOKEN_ID_KEY] = getEnvVar("FERMIONIQ_ACCESS_TOKEN_ID", "", true);
-  backendConfig[CFG_ACCESS_TOKEN_SECRET_KEY] = getEnvVar("FERMIONIQ_ACCESS_TOKEN_SECRET", "", true);
+  backendConfig[CFG_URL_KEY] =
+      getEnvVar("FERMIONIQ_API_BASE_URL", DEFAULT_URL, false);
+  backendConfig[CFG_API_KEY_KEY] =
+      getEnvVar("FERMIONIQ_API_KEY", DEFAULT_API_KEY, false);
 
-  backendConfig[CFG_USER_AGENT_KEY] = "cudaq/" + std::string(cudaq::getVersion());
+  backendConfig[CFG_ACCESS_TOKEN_ID_KEY] =
+      getEnvVar("FERMIONIQ_ACCESS_TOKEN_ID", "", true);
+  backendConfig[CFG_ACCESS_TOKEN_SECRET_KEY] =
+      getEnvVar("FERMIONIQ_ACCESS_TOKEN_SECRET", "", true);
+
+  backendConfig[CFG_USER_AGENT_KEY] =
+      "cudaq/" + std::string(cudaq::getVersion());
 
   if (config.find("project_id") != config.end()) {
     backendConfig[CFG_PROJECT_ID_KEY] = config.at("project_id");
@@ -51,39 +56,40 @@ void FermioniqServerHelper::initialize(BackendConfig config) {
 }
 
 // Implementation of the getValueOrDefault function
-std::string
-FermioniqServerHelper::getValueOrDefault(const BackendConfig &config,
-                                    const std::string &key,
-                                    const std::string &defaultValue) const {
+std::string FermioniqServerHelper::getValueOrDefault(
+    const BackendConfig &config, const std::string &key,
+    const std::string &defaultValue) const {
   return config.find(key) != config.end() ? config.at(key) : defaultValue;
 }
 
-std::vector<std::string> split_string(std::string str, std::string token){
-    std::vector<std::string>result;
-    while(str.size()){
-        std::size_t index = str.find(token);
-        if(index!=std::string::npos){
-            result.push_back(str.substr(0,index));
-            str = str.substr(index+token.size());
-            if(str.size()==0)result.push_back(str);
-        }else{
-            result.push_back(str);
-            str = "";
-        }
+std::vector<std::string> split_string(std::string str, std::string token) {
+  std::vector<std::string> result;
+  while (str.size()) {
+    std::size_t index = str.find(token);
+    if (index != std::string::npos) {
+      result.push_back(str.substr(0, index));
+      str = str.substr(index + token.size());
+      if (str.size() == 0)
+        result.push_back(str);
+    } else {
+      result.push_back(str);
+      str = "";
     }
-    return result;
+  }
+  return result;
 }
 
 // Retrieve an environment variable
 std::string FermioniqServerHelper::getEnvVar(const std::string &key,
-                                        const std::string &defaultVal,
-                                        const bool isRequired) const {
+                                             const std::string &defaultVal,
+                                             const bool isRequired) const {
   // Get the environment variable
   const char *env_var = std::getenv(key.c_str());
   // If the variable is not set, either return the default or throw an exception
   if (env_var == nullptr) {
     if (isRequired)
-      throw std::runtime_error("The " + key + " environment variable is not set but is required.");
+      throw std::runtime_error(
+          "The " + key + " environment variable is not set but is required.");
     else
       return defaultVal;
   }
@@ -104,7 +110,8 @@ bool FermioniqServerHelper::keyExists(const std::string &key) const {
   return backendConfig.find(key) != backendConfig.end();
 }
 
-ServerJobPayload FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
+ServerJobPayload
+FermioniqServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   cudaq::debug("createJob");
 
   if (circuitCodes.size() != 1) {
@@ -115,7 +122,7 @@ ServerJobPayload FermioniqServerHelper::createJob(std::vector<KernelExecution> &
   auto circuits = nlohmann::json::array({"__qir_base_compressed__"});
   auto configs = nlohmann::json::array();
   auto noise_models = nlohmann::json::array();
-  
+
   std::vector<std::string> circuit_names;
 
   for (auto &circuitCode : circuitCodes) {
@@ -144,10 +151,11 @@ ServerJobPayload FermioniqServerHelper::createJob(std::vector<KernelExecution> &
     noise_models.push_back(nullptr);
   }
 
-  auto circuit_names_imploded = std::accumulate(circuit_names.begin(), circuit_names.end(), std::string(), 
-    [](const std::string& a, const std::string& b) -> std::string { 
-        return a + (a.length() > 0 ? "," : "") + b; 
-    });
+  auto circuit_names_imploded = std::accumulate(
+      circuit_names.begin(), circuit_names.end(), std::string(),
+      [](const std::string &a, const std::string &b) -> std::string {
+        return a + (a.length() > 0 ? "," : "") + b;
+      });
 
   if (keyExists(CFG_REMOTE_CONFIG_KEY)) {
     job["remote_config"] = backendConfig.at(CFG_REMOTE_CONFIG_KEY);
@@ -175,13 +183,14 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
   std::mutex m;
   std::lock_guard<std::mutex> l(m);
   RestClient client;
-  
+
   if (!force_refresh) {
     auto now = std::chrono::high_resolution_clock::now();
 
     cudaq::debug("now: {}, tokenExpTime: {}", now, tokenExpTime);
 
-    auto timeLeft = std::chrono::duration_cast<std::chrono::minutes>(tokenExpTime - now);
+    auto timeLeft =
+        std::chrono::duration_cast<std::chrono::minutes>(tokenExpTime - now);
 
     cudaq::debug("timeleft minutes before token refresh: {}", timeLeft.count());
 
@@ -197,17 +206,18 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
   auto headers = getHeaders();
   nlohmann::json payload;
   payload["access_token_id"] = backendConfig.at(CFG_ACCESS_TOKEN_ID_KEY);
-  payload["access_token_secret"] = backendConfig.at(CFG_ACCESS_TOKEN_SECRET_KEY);
+  payload["access_token_secret"] =
+      backendConfig.at(CFG_ACCESS_TOKEN_SECRET_KEY);
 
-  auto response_json = client.post(backendConfig.at(CFG_URL_KEY), "/api/login", payload, headers);
+  auto response_json = client.post(backendConfig.at(CFG_URL_KEY), "/api/login",
+                                   payload, headers);
   token = response_json["jwt_token"].get<std::string>();
   userId = response_json["user_id"].get<std::string>();
 
   auto expDate = response_json["expiration_date"].get<std::string>();
 
-
   std::tm tm = {};
-  //2024-09-05T13:42:49.660841+00:00
+  // 2024-09-05T13:42:49.660841+00:00
   std::stringstream ss(expDate);
   ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
 
@@ -216,30 +226,30 @@ void FermioniqServerHelper::refreshTokens(bool force_refresh) {
   cudaq::debug("exp time: {}", tokenExpTime);
 }
 
-
 bool FermioniqServerHelper::jobIsDone(ServerMessage &getJobResponse) {
 #ifdef CUDAQ_DEBUG
   cudaq::debug("check job status {}", getJobResponse.dump());
 #endif
 
   refreshTokens(false);
-  
+
   std::string status = getJobResponse.at("status");
   int status_code = getJobResponse.at("status_code");
 
   if (status == "finished") {
-    cudaq::info("job is finished: {}", getJobResponse.dump());
+    cudaq::debug("job is finished: {}", getJobResponse.dump());
     if (status_code == 0) {
 
       // label is where we store circuit names comma separated.
-      std::string label = getJobResponse.at("job_label");    
+      std::string label = getJobResponse.at("job_label");
       auto splitted = split_string(label, ",");
 
       circuit_names = splitted;
 
       return true;
     }
-    throw std::runtime_error("Job failed to execute. Status code = " + std::to_string(status_code));
+    throw std::runtime_error("Job failed to execute. Status code = " +
+                             std::to_string(status_code));
   } else {
     cudaq::info("job still running. status={}", status);
   }
@@ -255,11 +265,12 @@ std::string FermioniqServerHelper::extractJobId(ServerMessage &postResponse) {
 }
 
 // Construct the path to get a job
-std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postResponse) {
+std::string
+FermioniqServerHelper::constructGetJobPath(ServerMessage &postResponse) {
   cudaq::debug("constructGetJobPath");
   std::string id = postResponse.at("id");
   // todo: Extract job-id from postResponse
-  
+
   auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/" + id;
   return ret;
 }
@@ -267,7 +278,7 @@ std::string FermioniqServerHelper::constructGetJobPath(ServerMessage &postRespon
 // Overloaded version of constructGetJobPath for jobId input
 std::string FermioniqServerHelper::constructGetJobPath(std::string &jobId) {
   cudaq::debug("constructGetJobPath (jobId) from {}", jobId);
-  
+
   auto ret = backendConfig.at(CFG_URL_KEY) + "/api/jobs/" + jobId;
   return ret;
 }
@@ -275,8 +286,8 @@ std::string FermioniqServerHelper::constructGetJobPath(std::string &jobId) {
 // Process the results from a job
 cudaq::sample_result
 FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
-                                 std::string &jobID) {
-  cudaq::info("processResults for job: {}", jobID);
+                                      std::string &jobID) {
+  cudaq::debug("processResults for job: {}", jobID);
 
   /*
   auto &output_names = outputNames[jobID];
@@ -295,19 +306,19 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
   std::string path = "/api/jobs/" + jobID + "/results";
 
   auto response_json = client.get(backendConfig.at(CFG_URL_KEY), path, headers);
-  
-  cudaq::info("got job result: {}", response_json.dump());
+
+  cudaq::debug("got job result: {}", response_json.dump());
 
   auto metadata = response_json.at("metadata");
-  //cudaq::info("metadata: {}", metadata.dump());
+  // cudaq::info("metadata: {}", metadata.dump());
   auto output = response_json.at("emulator_output");
 
   cudaq::sample_result sample_result;
 
   // to-do: restrict to 1 circuit
   for (const auto &it : output.items()) {
-    //cudaq::info("result: {}", it.value().dump());
-    //int circuit_number = it.value().at("circuit_number");
+    // cudaq::info("result: {}", it.value().dump());
+    // int circuit_number = it.value().at("circuit_number");
 
     // "samples":{"00000":500,"11111":500}
     auto output = it.value().at("output");
@@ -318,9 +329,18 @@ FermioniqServerHelper::processResults(ServerMessage &postJobResponse,
       sample_dict[qubit_str] = n_observed;
     }
 
-    ExecutionResult exec_result(sample_dict, 3.337);
+    if (output.contains("expectation_values")) {
+      auto exp_vals = output.at("expectation_values");
 
-    sample_result = cudaq::sample_result(exec_result);
+      double exp = exp_vals[0].at("expval").at("real");
+
+      ExecutionResult exec_result(sample_dict, exp);
+      sample_result = cudaq::sample_result(exec_result);
+    } else {
+      ExecutionResult exec_result(sample_dict);
+      sample_result = cudaq::sample_result(exec_result);
+    }
+
     break;
   }
 
@@ -369,7 +389,7 @@ RestHeaders FermioniqServerHelper::getHeaders() {
   if (keyExists(CFG_API_KEY_KEY) && backendConfig.at(CFG_API_KEY_KEY) != "") {
     headers["x-functions-key"] = backendConfig.at(CFG_API_KEY_KEY);
   }
-  
+
   if (!this->token.empty()) {
     headers["Authorization"] = token;
   }
@@ -380,13 +400,14 @@ RestHeaders FermioniqServerHelper::getHeaders() {
   return headers;
 }
 
-
 std::chrono::microseconds
 FermioniqServerHelper::nextResultPollingInterval(ServerMessage &postResponse) {
-  return std::chrono::seconds(POLLING_INTERVAL_IN_SECONDS); // jobs never take less than few seconds
+  return std::chrono::seconds(
+      POLLING_INTERVAL_IN_SECONDS); // jobs never take less than few seconds
 };
 
 } // namespace cudaq
 
 // Register the Fermioniq server helper in the CUDA-Q server helper factory
-CUDAQ_REGISTER_TYPE(cudaq::ServerHelper, cudaq::FermioniqServerHelper, fermioniq)
+CUDAQ_REGISTER_TYPE(cudaq::ServerHelper, cudaq::FermioniqServerHelper,
+                    fermioniq)

@@ -19,28 +19,30 @@
 
 namespace cudaq {
 
-/// @brief The FermioniqServerHelper class extends the ServerHelper class to handle
-/// interactions with the Fermioniq server for submitting and retrieving quantum
-/// computation jobs.
+/// @brief The FermioniqServerHelper class extends the ServerHelper class to
+/// handle interactions with the Fermioniq server for submitting and retrieving
+/// quantum computation jobs.
 class FermioniqServerHelper : public ServerHelper {
 
   static constexpr int POLLING_INTERVAL_IN_SECONDS = 1;
 
-  static constexpr const char *DEFAULT_URL = "https://fermioniq-api-fapp-prod.azurewebsites.net";
-  static constexpr const char *DEFAULT_API_KEY = "gCUVmJOKVCdPKRYpgk7nNWM_kTAsZfPeYTbte2sNuKtXAzFuYdj9ag==";
+  static constexpr const char *DEFAULT_URL =
+      "https://fermioniq-api-fapp-prod.azurewebsites.net";
+  static constexpr const char *DEFAULT_API_KEY =
+      "gCUVmJOKVCdPKRYpgk7nNWM_kTAsZfPeYTbte2sNuKtXAzFuYdj9ag==";
 
   static constexpr const char *CFG_URL_KEY = "base_url";
   static constexpr const char *CFG_ACCESS_TOKEN_ID_KEY = "access_token_id";
-  static constexpr const char *CFG_ACCESS_TOKEN_SECRET_KEY = "access_token_secret";
+  static constexpr const char *CFG_ACCESS_TOKEN_SECRET_KEY =
+      "access_token_secret";
   static constexpr const char *CFG_API_KEY_KEY = "api_key";
   static constexpr const char *CFG_USER_AGENT_KEY = "user_agent";
   static constexpr const char *CFG_TOKEN_KEY = "token";
-  
+
   static constexpr const char *CFG_REMOTE_CONFIG_KEY = "remote_config";
   static constexpr const char *CFG_NOISE_MODEL_KEY = "noise_model";
   static constexpr const char *CFG_BOND_DIM_KEY = "bond_dim";
   static constexpr const char *CFG_PROJECT_ID_KEY = "project_id";
-
 
 public:
   /// @brief Returns the name of the server helper.
@@ -86,11 +88,12 @@ public:
 #endif
 
   /// @brief Return next results polling interval
-  std::chrono::microseconds nextResultPollingInterval(ServerMessage &postResponse) override;
+  std::chrono::microseconds
+  nextResultPollingInterval(ServerMessage &postResponse) override;
 
 private:
   /// @brief RestClient used for HTTP requests.
-  //RestClient client;
+  // RestClient client;
 
   /// @brief API Key for Fermioniq API
   std::string token;
