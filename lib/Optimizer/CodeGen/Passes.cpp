@@ -57,18 +57,16 @@ static void addIonQPipeline(OpPassManager &pm) {
   pm.addPass(createBasisConversionPass(options));
 }
 
-
 static void addFermioniqPipeline(OpPassManager &pm) {
   // TO-DO Fermioniq: Figure this out!
   using namespace cudaq::opt;
   std::string basis[] = {
-    "h", "s", "t", "rx", "ry", "rz", "x", "y", "z", "x(1)",
+      "h", "s", "t", "rx", "ry", "rz", "x", "y", "z", "x(1)",
   };
   BasisConversionPassOptions options;
   options.basis = basis;
   pm.addPass(createBasisConversionPass(options));
 }
-
 
 void cudaq::opt::registerTargetPipelines() {
   PassPipelineRegistration<>("oqc-gate-set-mapping",
