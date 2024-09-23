@@ -44,5 +44,4 @@ int main() {
   // Get the results of the read in future.
   auto async_counts = readIn.get();
   async_counts.dump();
-
 }
