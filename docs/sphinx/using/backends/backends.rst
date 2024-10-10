@@ -25,7 +25,9 @@ CUDA-Q Backends
 * :ref:`orca <orca-backend>`
 * :ref:`qpp-cpu <qpp-cpu-backend>`
 * :ref:`quantinuum <quantinuum-backend>`
+* :ref:`fermioniq <fermioniq-backend>`
 * :ref:`remote-mqpu <mqpu-platform>`
+* :ref:`stim <stim-backend>`
 * :ref:`tensornet <tensor-backends>`
 * :ref:`tensornet-mps <tensor-backends>`
 

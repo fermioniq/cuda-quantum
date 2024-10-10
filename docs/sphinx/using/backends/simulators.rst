@@ -112,10 +112,10 @@ setting the target.
     - Number of CPU threads used for circuit processing. The default value is `8`.
   * - ``CUDAQ_MAX_CPU_MEMORY_GB``
     - non-negative integer, or `NONE`
-    - CPU memory size (in GB) allowed for state-vector migration. `NONE` means unlimited (up to physical memory constraints). Default is 0 (disabled). 
+    - CPU memory size (in GB) allowed for state-vector migration. `NONE` means unlimited (up to physical memory constraints). Default is 0GB (disabled, variable is not set to any value).
   * - ``CUDAQ_MAX_GPU_MEMORY_GB``
     - positive integer, or `NONE`
-    - GPU memory (in GB) allowed for on-device state-vector allocation. As the state-vector size exceeds this limit, host memory will be utilized for migration. `NONE` means unlimited (up to physical memory constraints). This is the default. 
+    - GPU memory (in GB) allowed for on-device state-vector allocation. As the state-vector size exceeds this limit, host memory will be utilized for migration. `NONE` means unlimited (up to physical memory constraints). This is the default.
 
 .. deprecated:: 0.8
     The :code:`nvidia-fp64` targets, which is equivalent setting the `fp64` option on the :code:`nvidia` target, 
@@ -301,6 +301,40 @@ use the following commands:
         ./program.x
 
 
+Clifford-Only Simulation (CPU)
+++++++++++++++++++++++++++++++++++
+
+.. _stim-backend:
+
+This target provides a fast simulator for circuits containing *only* Clifford
+gates. Any non-Clifford gates (such as T gates and Toffoli gates) are not
+supported. This simulator is based on the `Stim <https://github.com/quantumlib/Stim>`_
+library.
+
+To execute a program on the :code:`stim` target, use the following commands:
+
+.. tab:: Python
+
+    .. code:: bash 
+
+        python3 program.py [...] --target stim
+
+    The target can also be defined in the application code by calling
+
+    .. code:: python 
+
+        cudaq.set_target('stim')
+
+    If a target is set in the application code, this target will override the :code:`--target` command line flag given during program invocation.
+
+.. tab:: C++
+
+    .. code:: bash 
+
+        nvq++ --target stim program.cpp [...] -o program.x
+        ./program.x
+
+
 Tensor Network Simulators
 ==================================
 
@@ -444,6 +478,88 @@ Specific aspects of the simulation can be configured by defining the following e
 .. note::
     The parallelism of Jacobi method (the default `CUDAQ_MPS_SVD_ALGO` setting) gives GPU better performance on small and medium size matrices.
     If you expect a large number of singular values (e.g., increasing the `CUDAQ_MPS_MAX_BOND` setting), please adjust the `CUDAQ_MPS_SVD_ALGO` setting accordingly.  
+
+Fermioniq
+==================================
+
+.. _fermioniq-backend:
+
+Programmers of CUDA-Q may access the Fermioniq API from either
+C++ or Python. Fermioniq requires you to set two environment variables:
+`FERMIONIQ_ACCESS_TOKEN_ID` and `FERMIONIQ_ACCESS_TOKEN_SECRET`.
+You can obtain them from Fermioniq directly.
+
+
+.. tab:: C++
+
+    To target quantum kernel code for execution in the Fermioniq backends,
+    pass the flag ``--target fermioniq`` to the ``nvq++`` compiler. CUDA-Q will 
+    authenticate via the Fermioniq REST API using the environment variables 
+    set earlier.
+
+    .. code:: bash
+
+        nvq++ --target fermioniq src.cpp ...
+
+    You will have to specify a remote configuration id for the Fermioniq backend
+    during compilation.
+
+    .. code:: bash
+
+        nvq++ --target fermioniq --fermioniq-remote-config <remote_config_id> src.cpp ...
+
+    For a comprehensive list of all remote configurations, please consult with Fermioniq.
+
+    When your organization requires you to define a project id, you have to specify
+    the project id during compilation.
+
+    .. code:: bash
+
+        nvq++ --target fermioniq --fermioniq-project-id <project_id> src.cpp ...
+
+    To specify the bond dimensions, you can pass the ``fermioniq-bond-dim`` parameter.
+
+    .. code:: bash
+
+        nvq++ --target fermioniq --fermioniq-bind-dim 10 src.cpp ...
+
+
+.. tab:: Python
+
+    The target to which quantum kernels are submitted 
+    can be controlled with the ``cudaq::set_target()`` function.
+
+    .. code:: python
+
+        cudaq.set_target('fermioniq')
+
+    You will have to specify a remote configuration id for the Fermioniq backend
+    during compilation.
+
+    .. code:: python
+
+        cudaq.set_target("fermioniq", **{
+            "remote-config": remote_config_id
+        })
+
+    For a comprehensive list of all remote configurations, please consult with Fermioniq.
+
+    When your organization requires you to define a project id, you have to specify
+    the project id during compilation.
+
+    .. code:: python
+
+        cudaq.set_target("fermioniq", **{
+            "project-id": project_id
+        })
+
+    To specify the bond dimensions, you can pass the ``fermioniq-bond-dim`` parameter.
+
+    .. code:: python 
+
+        cudaq.set_target("fermioniq", **{
+            "bond-dim": 5
+        })
 
 Default Simulator
 ==================================

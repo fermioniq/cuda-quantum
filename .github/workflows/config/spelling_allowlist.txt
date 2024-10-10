@@ -26,6 +26,7 @@ DOI
 Deuteron
 Doxygen
 FPGAs
+Fermioniq
 Fortran
 Fourier
 GHCR
@@ -198,6 +199,7 @@ expressivity
 extensibility
 extremal
 fermionic
+fermioniq
 fmt
 frontend
 frontends
