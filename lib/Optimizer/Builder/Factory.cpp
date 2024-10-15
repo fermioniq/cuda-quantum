@@ -43,6 +43,8 @@ static Type genBufferType(Type ty) {
   auto *ctx = ty.getContext();
   if (isa<cudaq::cc::CallableType>(ty))
     return cudaq::cc::PointerType::get(ctx);
+  if (isa<cudaq::cc::IndirectCallableType>(ty))
+    return IntegerType::get(ctx, 64);
   if (auto vecTy = dyn_cast<cudaq::cc::SpanLikeType>(ty)) {
     auto i64Ty = IntegerType::get(ctx, 64);
     if (isOutput) {
@@ -368,6 +370,8 @@ static Type convertToHostSideType(Type ty) {
   if (auto memrefTy = dyn_cast<cc::StdvecType>(ty))
     return convertToHostSideType(
         factory::stlVectorType(memrefTy.getElementType()));
+  if (isa<cc::IndirectCallableType>(ty))
+    return cc::PointerType::get(IntegerType::get(ty.getContext(), 8));
   if (auto memrefTy = dyn_cast<cc::CharspanType>(ty)) {
     // `pauli_word` is an object with a std::vector in the header files at
     // present. This data type *must* be updated if it becomes a std::string
@@ -608,6 +612,28 @@ factory::readGlobalConstantArray(cudaq::cc::GlobalOp &global) {
     result.push_back(v);
   }
   return result;
+}
+
+std::pair<mlir::func::FuncOp, bool>
+factory::getOrAddFunc(mlir::Location loc, mlir::StringRef funcName,
+                      mlir::FunctionType funcTy, mlir::ModuleOp module) {
+  auto func = module.lookupSymbol<func::FuncOp>(funcName);
+  if (func) {
+    if (!func.empty()) {
+      // Already lowered function func, skip it.
+      return {func, /*defined=*/true};
+    }
+    // Function was declared but not defined.
+    return {func, /*defined=*/false};
+  }
+  // Function not found, so add it to the module.
+  OpBuilder build(module.getBodyRegion());
+  OpBuilder::InsertionGuard guard(build);
+  build.setInsertionPointToEnd(module.getBody());
+  SmallVector<NamedAttribute> attrs;
+  func = build.create<func::FuncOp>(loc, funcName, funcTy, attrs);
+  func.setPrivate();
+  return {func, /*defined=*/false};
 }
 
 } // namespace cudaq::opt
