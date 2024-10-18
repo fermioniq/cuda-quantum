@@ -23,6 +23,7 @@ on:
           - quantinuum
           - nvqc
           - orca
+          - fermioniq
       single_test_name:
         type: string
         required: false
@@ -69,7 +70,7 @@ env:
   NGC_QUANTUM_TEAM: cuda-quantum
   NVQC_FUNCTION_ID: 3bfa0342-7d2a-4f1b-8e81-b6608d28ca7d
   # <Backend>:<GPU Type>:<Instance Type>:<Min Instances>:<Max Instances>
-  NGC_NVQC_DEPLOYMENT_SPEC: GFN:L40:gl40_1.br20_2xlarge:1:1
+  NGC_NVQC_DEPLOYMENT_SPEC: GFN:L40S:gl40s_1.br25_2xlarge:1:1
   # If vars below are changed, it is recommended to also update the
   # workflow_dispatch defaults above so they stay in sync.
   cudaq_test_image: nvcr.io/nvidia/nightly/cuda-quantum:latest
@@ -490,7 +491,7 @@ jobs:
           export ORCA_ACCESS_URL='${{ secrets.ORCA_ACCESS_URL }}'
           set +e # Allow script to keep going through errors
           test_err_sum=0
-          cpp_tests="docs/sphinx/examples/cpp/providers/orca.cpp"
+          cpp_tests="docs/sphinx/examples/cpp/providers/orca.cpp docs/sphinx/examples/cpp/providers/orca_mqpu.cpp"
           for filename in $cpp_tests; do
             [ -e "$filename" ] || echo "::error::Couldn't find file ($filename)"
             nvq++ --target orca --orca-url $ORCA_ACCESS_URL $filename
@@ -509,7 +510,57 @@ jobs:
               test_err_sum=$((test_err_sum+1))
             fi
           done
-          python_tests="docs/sphinx/examples/python/providers/orca.py"
+          python_tests="docs/sphinx/examples/python/providers/orca.py docs/sphinx/examples/python/providers/orca_mqpu.py"
+          for filename in $python_tests; do
+            [ -e "$filename" ] || echo "::error::Couldn't find file ($filename)"
+            python3 $filename 1> /dev/null
+            test_status=$?
+            if [ $test_status -eq 0 ]; then
+              echo ":white_check_mark: Successfully ran test: $filename" >> $GITHUB_STEP_SUMMARY
+            else
+              echo ":x: Test failed (failed to execute): $filename" >> $GITHUB_STEP_SUMMARY
+              test_err_sum=$((test_err_sum+1))
+            fi
+          done
+          set -e # Re-enable exit code error checking
+          if [ ! $test_err_sum -eq 0 ]; then
+            echo "::error::${test_err_sum} tests failed. See step summary for a list of failures"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Submit to Fermioniq test server
+        if: (success() || failure()) && (inputs.target == 'fermioniq' || github.event_name == 'schedule' || inputs.target == 'nightly')
+        run: |
+          echo "### Submit to Fermioniq server" >> $GITHUB_STEP_SUMMARY
+          export FERMIONIQ_ACCESS_TOKEN_ID='${{ secrets.FERMIONIQ_ACCESS_TOKEN_ID }}'
+          export FERMIONIQ_ACCESS_TOKEN_SECRET='${{ secrets.FERMIONIQ_ACCESS_TOKEN_SECRET }}'
+          export FERMIONIQ_PROJECT_ID='c86e2cb8-d776-41ae-8240-d3d55e18b7c3'
+          set +e # Allow script to keep going through errors
+          test_err_sum=0
+          cpp_tests="docs/sphinx/examples/cpp/providers/fermioniq.cpp"
+          for filename in $cpp_tests; do
+            [ -e "$filename" ] || echo "::error::Couldn't find file ($filename)"
+            nvq++ \
+              --target fermioniq \
+              --fermioniq-project-id $FERMIONIQ_PROJECT_ID \
+              $filename
+            test_status=$?
+            if [ $test_status -eq 0 ]; then
+              ./a.out 1> /dev/null
+              test_status=$?
+              if [ $test_status -eq 0 ]; then
+                echo ":white_check_mark: Successfully ran test: $filename" >> $GITHUB_STEP_SUMMARY
+              else
+                echo ":x: Test failed (failed to execute): $filename" >> $GITHUB_STEP_SUMMARY
+                test_err_sum=$((test_err_sum+1))
+              fi
+            else
+              echo ":x: Test failed (failed to compile): $filename" >> $GITHUB_STEP_SUMMARY
+              test_err_sum=$((test_err_sum+1))
+            fi
+          done
+          python_tests="docs/sphinx/examples/python/providers/fermioniq.py docs/sphinx/examples/python/providers/fermioniq_observables.py"
           for filename in $python_tests; do
             [ -e "$filename" ] || echo "::error::Couldn't find file ($filename)"
             python3 $filename 1> /dev/null
@@ -607,8 +658,8 @@ jobs:
           for filename in `find targettests/Remote-Sim -name '*.cpp'`; do
             # unsupport_args and compile_errors are compile error tests
             # nested_vectors: Compiler fails to synthesize nested vector parameters (https://github.com/NVIDIA/cuda-quantum/issues/2001)
-            # state_init: New argument synthesis is not executed for nvqc (https://github.com/NVIDIA/cuda-quantum/issues/2146)
-            if [[ "$filename" != *"unsupport_args"* ]] && [[ "$filename" != *"compile_errors"* ]] && [[ "$filename" != *"nested_vectors"* ]] && [[ "$filename" != *"qvector_init_from_state"* ]]; then
+            # qvector_init_from_state, qvector_init_from_state_lazy, test_trotter: New argument synthesis is not executed for nvqc (https://github.com/NVIDIA/cuda-quantum/issues/2146)
+            if [[ "$filename" != *"unsupport_args"* ]] && [[ "$filename" != *"compile_errors"* ]] && [[ "$filename" != *"nested_vectors"* ]] && [[ "$filename" != *"qvector_init_from_state"* ]] && [[ "$filename" != *"qvector_init_from_state_lazy"* ]] && [[ "$filename" != *"test_trotter"* ]]; then
               echo "$filename"
               nvqc_config=""
               # Look for a --remote-mqpu-auto-launch to determine the number of QPUs

@@ -168,8 +168,7 @@ def ConstPropComplex : Pass<"const-prop-complex", "mlir::ModuleOp"> {
   }];
 }
 
-def ConvertToDirectCalls :
-    Pass<"indirect-to-direct-calls", "mlir::func::FuncOp"> {
+def ConvertToDirectCalls : Pass<"indirect-to-direct-calls", "mlir::ModuleOp"> {
   let summary = "Convert calls to direct calls to Quake routines.";
   let description = [{
     Rewrite the calls in the IR so that they point to the generated code and not
@@ -325,13 +324,14 @@ def GenerateDeviceCodeLoader : Pass<"device-code-loader", "mlir::ModuleOp"> {
   }];
 
   let dependentDialects = ["mlir::LLVM::LLVMDialect"];
-  let constructor = "cudaq::opt::createGenerateDeviceCodeLoader()";
 
   let options = [
     Option<"outputFilename", "output-filename", "std::string",
       /*default=*/"\"-\"", "Name of output file.">,
     Option<"generateAsQuake", "use-quake", "bool",
-      /*default=*/"false", "Output should be module in Quake dialect.">
+      /*default=*/"true", "Output should be module in Quake dialect.">,
+    Option<"jitTime", "jit-compile", "bool",
+      /*default=*/"false", "Running pass at JIT compile time (default=false).">
   ];
 }
 

@@ -102,7 +102,10 @@ private:
       return;
     FunctionAnalysisData data;
     funcOp->walk([&](LLVM::CallOp callOp) {
-      StringRef funcName = callOp.getCalleeAttr().getValue();
+      auto funcNameAttr = callOp.getCalleeAttr();
+      if (!funcNameAttr)
+        return;
+      auto funcName = funcNameAttr.getValue();
 
       // For every allocation call, create a range of integers to uniquely
       // identify the qubits in the allocation.
@@ -356,7 +359,10 @@ struct QIRToQIRProfileFuncPass
       return op.empty() || op.getPassthroughAttr();
     });
     target.addDynamicallyLegalOp<LLVM::CallOp>([](LLVM::CallOp op) {
-      StringRef funcName = op.getCalleeAttr().getValue();
+      auto funcNameAttr = op.getCalleeAttr();
+      if (!funcNameAttr)
+        return true;
+      auto funcName = funcNameAttr.getValue();
       return (!funcName.equals(cudaq::opt::QIRArrayQubitAllocateArray) &&
               !funcName.equals(cudaq::opt::QIRQubitAllocate)) ||
              op->hasAttr(cudaq::opt::StartingOffsetAttrName);
@@ -428,6 +434,32 @@ struct CallAlloc : public OpRewritePattern<LLVM::CallOp> {
   }
 };
 
+// %1 = address_of @__quantum__qis__z__ctl
+// %2 = call @invokewithControlBits %1, %ctrl, %targ
+// ─────────────────────────────────────────────────
+// %2 = call __quantum__qis__cz %ctrl, %targ
+struct ZCtrlOneTargetToCZ : public OpRewritePattern<LLVM::CallOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(LLVM::CallOp call,
+                                PatternRewriter &rewriter) const override {
+    ValueRange args(call.getArgOperands());
+    if (args.size() == 4 && call.getCallee() &&
+        call.getCallee()->equals(cudaq::opt::NVQIRInvokeWithControlBits)) {
+      if (auto addrOf = dyn_cast_or_null<mlir::LLVM::AddressOfOp>(
+              args[1].getDefiningOp())) {
+        if (addrOf.getGlobalName().startswith(
+                std::string(cudaq::opt::QIRQISPrefix) + "z__ctl")) {
+          rewriter.replaceOpWithNewOp<LLVM::CallOp>(
+              call, TypeRange{}, cudaq::opt::QIRCZ, args.drop_front(2));
+          return success();
+        }
+      }
+    }
+    return failure();
+  }
+};
+
 /// QIR to the Specific QIR Profile
 ///
 /// This pass converts patterns in LLVM-IR dialect using QIR calls, etc. into a
@@ -451,10 +483,11 @@ struct QIRToQIRProfileQIRPass
     RewritePatternSet patterns(context);
     // Note: LoadMeasureResult is not compliant with the Base Profile, so don't
     // add it here unless we're specifically doing the Adaptive Profile.
-    patterns.insert<AddrOfCisToBase, ArrayGetElementPtrConv, CallAlloc,
-                    CalleeConv, EraseArrayAlloc, EraseArrayRelease,
-                    EraseDeadArrayGEP, MeasureCallConv,
-                    MeasureToRegisterCallConv, XCtrlOneTargetToCNot>(context);
+    patterns
+        .insert<AddrOfCisToBase, ArrayGetElementPtrConv, CallAlloc, CalleeConv,
+                EraseArrayAlloc, EraseArrayRelease, EraseDeadArrayGEP,
+                MeasureCallConv, MeasureToRegisterCallConv,
+                XCtrlOneTargetToCNot, ZCtrlOneTargetToCZ>(context);
     if (convertTo.getValue() == "qir-adaptive")
       patterns.insert<LoadMeasureResult>(context);
     if (failed(applyPatternsAndFoldGreedily(op, std::move(patterns))))
@@ -497,6 +530,11 @@ struct QIRProfilePreparationPass
     // Add cnot declaration as it may be referenced after peepholes run.
     cudaq::opt::factory::createLLVMFunctionSymbol(
         cudaq::opt::QIRCnot, LLVM::LLVMVoidType::get(ctx),
+        {cudaq::opt::getQubitType(ctx), cudaq::opt::getQubitType(ctx)}, module);
+
+    // Add cz declaration as it may be referenced after peepholes run.
+    cudaq::opt::factory::createLLVMFunctionSymbol(
+        cudaq::opt::QIRCZ, LLVM::LLVMVoidType::get(ctx),
         {cudaq::opt::getQubitType(ctx), cudaq::opt::getQubitType(ctx)}, module);
 
     // Add measure_body as it has a different signature than measure.
@@ -545,7 +583,6 @@ std::unique_ptr<Pass> cudaq::opt::createQIRProfilePreparationPass() {
 }
 
 //===----------------------------------------------------------------------===//
-
 // The various passes defined here should be added as a pass pipeline.
 
 void cudaq::opt::addQIRProfilePipeline(OpPassManager &pm,
