@@ -48,6 +48,7 @@ declare_mlir_python_extension(CUDAQuantumPythonSources.Extension
     ../runtime/common/py_NoiseModel.cpp
     ../runtime/common/py_ObserveResult.cpp
     ../runtime/common/py_SampleResult.cpp
+    ../runtime/common/py_CustomOpRegistry.cpp
     ../runtime/cudaq/algorithms/py_draw.cpp
     ../runtime/cudaq/algorithms/py_observe_async.cpp
     ../runtime/cudaq/algorithms/py_optimizer.cpp
@@ -66,13 +67,17 @@ declare_mlir_python_extension(CUDAQuantumPythonSources.Extension
     ../runtime/cudaq/target/py_testing_utils.cpp
     ../runtime/mlir/py_register_dialects.cpp
     ../runtime/utils/PyRemoteRESTQPU.cpp
+    ../runtime/utils/PyFermioniqRESTQPU.cpp
     ../runtime/utils/PyRemoteSimulatorQPU.cpp
     ../runtime/utils/PyRestRemoteClient.cpp
     ../utils/LinkedLibraryHolder.cpp
+    ../../runtime/common/ArgumentConversion.cpp
     ../../runtime/cudaq/platform/common/QuantumExecutionQueue.cpp
     ../../runtime/cudaq/platform/default/rest_server/RemoteRuntimeClient.cpp
+    ../../runtime/cudaq/platform/orca/OrcaExecutor.cpp
     ../../runtime/cudaq/platform/orca/OrcaQPU.cpp
-    ../../runtime/common/ArgumentConversion.cpp
+    ../../runtime/cudaq/platform/orca/OrcaRemoteRESTQPU.cpp
+    ../../runtime/cudaq/platform/orca/OrcaServerHelper.cpp
 
   EMBED_CAPI_LINK_LIBS
    CUDAQuantumMLIRCAPI
@@ -82,6 +87,7 @@ declare_mlir_python_extension(CUDAQuantumPythonSources.Extension
    OptTransforms
    MLIRPass
    CUDAQTargetConfigUtil
+   cudaq-python-interop
 )
 
 target_include_directories(CUDAQuantumPythonSources.Extension INTERFACE 
